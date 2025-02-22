@@ -1,6 +1,6 @@
 from typing import List
 import random
-from ..models.card import Card, Suit
+from scoundrel.models.card import Card, Suit
 
 
 class Deck:

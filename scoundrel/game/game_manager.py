@@ -1,9 +1,9 @@
 from typing import List, Optional
-from ..models.game_state import GameState
-from ..models.card import Card, CardType
-from ..game.deck import Deck
-from ..game.combat import Combat
-from ..ui.terminal_ui import TerminalUI
+from scoundrel.models.game_state import GameState
+from scoundrel.models.card import Card, CardType
+from scoundrel.game.deck import Deck
+from scoundrel.game.combat import Combat
+from scoundrel.ui.terminal_ui import TerminalUI
 
 
 class GameManager:

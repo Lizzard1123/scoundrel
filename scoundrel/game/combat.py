@@ -1,5 +1,5 @@
-from ..models.card import Card, CardType
-from ..models.game_state import GameState
+from scoundrel.models.card import Card, CardType
+from scoundrel.models.game_state import GameState
 
 
 class Combat:

@@ -1,0 +1,4 @@
+*.egg-info/*
+**/__pycache__/*
+scoundrel/src/game/__pycache__/__init__.cpython-311.pyc
+scoundrel/src/game/__pycache__/game_manager.cpython-311.pyc

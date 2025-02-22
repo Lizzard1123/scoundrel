@@ -2,8 +2,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
-from ..models.game_state import GameState
-from ..models.card import Card, CardType
+from scoundrel.models.game_state import GameState
+from scoundrel.models.card import Card, CardType
 
 
 class TerminalUI:

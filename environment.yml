@@ -1,0 +1,13 @@
+# environment.yml
+name: scoundrel
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - rich>=13.0.0
+    - pytest>=7.0.0
+    - black>=23.0.0
+    - isort>=5.0.0

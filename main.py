@@ -1,5 +1,5 @@
-from game.game_manager import GameManager
-from models.card import CardType
+from scoundrel.game.game_manager import GameManager
+from scoundrel.models.card import CardType
 
 def main():
     game = GameManager()

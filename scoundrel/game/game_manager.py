@@ -1,4 +1,5 @@
-from typing import List, Optional
+# scoundrel/game/game_manager.py
+from typing import List, Optional, Tuple
 from scoundrel.models.game_state import GameState
 from scoundrel.models.card import Card, CardType
 from scoundrel.game.deck import Deck
@@ -17,10 +18,46 @@ class GameManager:
         self.draw_room()
 
     def draw_room(self):
-        cards_needed = 4 - len(self.state.room)
-        for _ in range(cards_needed):
-            if self.state.dungeon:
-                self.state.room.append(self.state.dungeon.pop())
+        # Only draw if there's 1 or 0 cards in the room
+        if len(self.state.room) <= 1:
+            cards_needed = 4 - len(self.state.room)
+            for _ in range(cards_needed):
+                if self.state.dungeon:
+                    self.state.room.append(self.state.dungeon.pop())
+
+    def parse_command(self, command: str) -> Tuple[str, int]:
+        """Parse command string into action and card index"""
+        parts = command.lower().strip().split()
+
+        # Handle avoid command
+        if parts[0] == "avoid" or parts[0] == "0":
+            return "avoid", 0
+
+        # Handle other commands
+        if len(parts) == 2:
+            action, index = parts
+            try:
+                index = int(index)
+                if 1 <= index <= len(self.state.room):
+                    return action, index
+            except ValueError:
+                pass
+        elif len(parts) == 1:
+            # Check if it's just a number
+            try:
+                index = int(parts[0])
+                if 1 <= index <= len(self.state.room):
+                    card = self.state.room[index - 1]
+                    action = {
+                        CardType.MONSTER: "fight",
+                        CardType.WEAPON: "take",
+                        CardType.POTION: "heal",
+                    }[card.type]
+                    return action, index
+            except ValueError:
+                pass
+
+        return "invalid", 0
 
     def handle_card(self, card: Card):
         if card.type == CardType.WEAPON:
@@ -58,29 +95,45 @@ class GameManager:
     def play_turn(self):
         self.ui.display_game_state(self.state)
 
-        if len(self.state.room) < 4:
+        if len(self.state.room) <= 1:
             self.draw_room()
 
-        # Get player choice
-        print("\nOptions:")
-        print("0. Avoid room")
-        for i, card in enumerate(self.state.room, 1):
-            print(f"{i}. Take {card}")
+        self.ui.display_game_state(self.state)
 
         while True:
             try:
-                choice = int(input("\nEnter your choice (0-4): "))
-                if choice == 0:
+                command = input("\nEnter command: ").strip()
+                action, index = self.parse_command(command)
+
+                if action == "invalid":
+                    print(
+                        "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
+                    )
+                    continue
+
+                if action == "avoid":
                     if self.avoid_room():
                         break
                     else:
                         print("Cannot avoid two rooms in a row!")
-                elif 1 <= choice <= len(self.state.room):
-                    card = self.state.room.pop(choice - 1)
+                else:
+                    card = self.state.room[index - 1]
+                    expected_action = {
+                        CardType.MONSTER: "fight",
+                        CardType.WEAPON: "take",
+                        CardType.POTION: "heal",
+                    }[card.type]
+
+                    if action != expected_action:
+                        print(f"Invalid action! Use '{expected_action}' for this card")
+                        continue
+
+                    self.state.room.pop(index - 1)
                     self.handle_card(card)
                     self.state.last_room_avoided = False
                     break
-            except ValueError:
-                print("Invalid input!")
+
+            except (ValueError, IndexError):
+                print("Invalid input! Try again.")
 
         return not self.state.game_over

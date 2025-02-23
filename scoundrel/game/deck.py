@@ -12,7 +12,7 @@ class Deck:
             if suit in [Suit.HEARTS, Suit.DIAMONDS]:
                 values = range(2, 11)
             else:
-                values = range(1, 14)
+                values = range(2, 15)
 
             for value in values:
                 cards.append(Card(value, suit))

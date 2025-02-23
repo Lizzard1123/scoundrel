@@ -31,7 +31,7 @@ class Card:
 
     @property
     def display_value(self) -> str:
-        if self.value == 1:
+        if self.value == 14:
             return "A"
         elif self.value == 11:
             return "J"

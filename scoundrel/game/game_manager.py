@@ -17,6 +17,10 @@ class GameManager:
         self.state.dungeon = Deck.create_deck()
         self.draw_room()
 
+    def restart(self):
+        self.state = GameState()
+        self.setup_game()
+
     # Fresh room state
     def draw_room(self):
         # Only draw if there's 1 or 0 cards in the room
@@ -43,7 +47,15 @@ class GameManager:
         if parts[0] == "avoid" or parts[0] == "0":
             return "avoid", 0
 
-        # Handle other commands
+        # Handle restart command
+        if parts[0] == "r":
+            return "restart", 0
+
+        # Handle exit command
+        if parts[0] == "e":
+            return "exit", 0
+
+        # Handle card commands
         if len(parts) == 2:
             action, index = parts
             try:
@@ -100,8 +112,17 @@ class GameManager:
         # Parse input and take action loop
         while True:
             try:
-                command = input("\nEnter command: ").strip()
+                command_text = "\nEnter command: " if not self.state.game_over else "Press \'R\' to restart or \'E\' to exit"
+                command = input(command_text).strip()
                 action, index = self.parse_command(command)
+
+                if action == "restart":
+                    self.restart()
+                    break
+
+                if action == "exit":
+                    self.state.exit = True
+                    break
 
                 if action == "invalid":
                     print(
@@ -129,4 +150,4 @@ class GameManager:
             except (ValueError, IndexError):
                 print("Invalid input! Try again.")
 
-        return not self.state.game_over
+        return not self.state.exit

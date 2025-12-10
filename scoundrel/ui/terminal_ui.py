@@ -88,6 +88,19 @@ class TerminalUI:
         )
         self.console.print(header)
 
+        # Check if game over
+        if(game_state.game_over):
+            game_over_panel = Panel(
+                Align.center(f"Score: {game_state.score}", vertical="middle"),
+                title="[bold red]Game Over[/bold red]",
+                box=ROUNDED,
+                padding=(0, 1),
+                width=total_width,
+                height= room_height + actions_height,
+            )
+            self.console.print(game_over_panel)
+            return
+
         # Create and print room display
         room_cards = []
         if game_state.room:

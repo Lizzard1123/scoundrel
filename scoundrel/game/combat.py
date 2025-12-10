@@ -4,7 +4,7 @@ from scoundrel.models.game_state import GameState
 
 class Combat:
     @staticmethod
-    def calculate_damage(monster: Card, weapon: Card = None) -> int:
+    def calculate_damage(monster: Card, weapon: Card | None = None) -> int:
         if not weapon:
             return monster.value
 

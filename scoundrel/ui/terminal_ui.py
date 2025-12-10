@@ -13,7 +13,7 @@ class TerminalUI:
     def __init__(self):
         self.console = Console()
 
-    def create_card_panel(self, card: Card, index: int = None) -> Panel:
+    def create_card_panel(self, card: Card, index: int = 0) -> Panel:
         """Create a stylized panel for a card"""
         color = {
             CardType.MONSTER: "red",
@@ -47,7 +47,7 @@ class TerminalUI:
             height=3,
         )
 
-    def create_weapon_stack(self, weapon: Card, monsters: list[Card]) -> str:
+    def create_weapon_stack(self, weapon: Card | None, monsters: list[Card]) -> str:
         """Create a compact weapon display"""
         if not weapon:
             return "[yellow]No weapon equipped[/yellow]"

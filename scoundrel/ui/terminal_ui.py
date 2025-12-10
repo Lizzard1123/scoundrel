@@ -3,39 +3,26 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.columns import Columns
+from rich.align import Align
 from rich.box import ROUNDED
 from rich import box
 from scoundrel.models.game_state import GameState
-from scoundrel.models.card import Card, CardType
+from scoundrel.models.card import Card, CardAction, CardColor, CardType
 
 
 class TerminalUI:
     def __init__(self):
         self.console = Console()
 
-    def create_card_panel(self, card: Card, index: int = 0) -> Panel:
+    def create_card_panel(self, card: Card, index: int, game_state: GameState) -> Panel:
         """Create a stylized panel for a card"""
-        color = {
-            CardType.MONSTER: "red",
-            CardType.WEAPON: "yellow",
-            CardType.POTION: "green",
-        }[card.type]
+        color = CardColor[card.type]
 
-        action = {
-            CardType.MONSTER: "fight",
-            CardType.WEAPON: "take",
-            CardType.POTION: "heal",
-        }[card.type]
+        action = CardAction[card.type]
 
-        title = f"[{index}] {action}" if index is not None else ""
+        title = f"[{index}]" if index is not None else ""
 
-        content = f"[bold {color}]{str(card)}[/bold {color}]"
-        if card.type == CardType.MONSTER:
-            content += f" ({card.value}⚔️)"
-        elif card.type == CardType.WEAPON:
-            content += f" ({card.value}⚡)"
-        elif card.type == CardType.POTION:
-            content += f" ({card.value}❤️)"
+        content = f"{action}[bold {color}]{str(card)}[/bold {color}]"
 
         return Panel(
             content,
@@ -43,7 +30,7 @@ class TerminalUI:
             border_style=color,
             box=box.ROUNDED,
             width=20,
-            padding=(0, 1),
+            padding=(0, 4),
             height=3,
         )
 
@@ -52,15 +39,15 @@ class TerminalUI:
         if not weapon:
             return "[yellow]No weapon equipped[/yellow]"
 
-        result = f"[yellow]Weapon: {str(weapon)}[/yellow] ({weapon.value}⚡)"
+        result = f"[yellow]Weapon: {str(weapon)}[/yellow] "
         if monsters:
-            result += " [red]vs[/red] " + " ".join(
+            result += "[red]vs[/red] " + " ".join(
                 f"[red]{str(m)}[/red]" for m in monsters
             )
         return result
 
     def display_game_state(self, game_state: GameState):
-        """Display the game state in a compact, attractive layout at the bottom of the screen"""
+        """Display the game state layout at the bottom of the screen"""
         self.console.clear()
 
         # Get terminal height
@@ -71,6 +58,7 @@ class TerminalUI:
         room_height = 5
         actions_height = 3
         total_height = header_height + room_height + actions_height
+        total_width = 88
 
         # Print newlines to push content to bottom
         padding_lines = terminal_height - total_height - 1  # -1 for input prompt
@@ -91,10 +79,11 @@ class TerminalUI:
         )
 
         header = Panel(
-            header_content,
+            Align.center(header_content, vertical="middle"),
             title="[bold]Scoundrel[/bold]",
             box=ROUNDED,
             padding=(0, 1),
+            width=total_width,
             height=header_height,
         )
         self.console.print(header)
@@ -103,14 +92,15 @@ class TerminalUI:
         room_cards = []
         if game_state.room:
             for i, card in enumerate(game_state.room, 1):
-                room_cards.append(self.create_card_panel(card, i))
+                room_cards.append(self.create_card_panel(card, i, game_state))
 
         room_display = Panel(
-            Columns(room_cards, padding=1) if room_cards else "Empty room",
+            Columns(room_cards, padding=1, width=20) if room_cards else "Empty room",
             title="[bold blue]Room[/bold blue]",
             border_style="blue",
             box=ROUNDED,
             padding=(0, 1),
+            width=total_width,
             height=room_height,
         )
         self.console.print(room_display)
@@ -118,23 +108,18 @@ class TerminalUI:
         # Create and print actions
         options = []
         if game_state.room:
-            options.append("[bold white]avoid[/bold white]")
+            if game_state.can_avoid:
+                options.append("[bold white]avoid[/bold white]")
             for i, card in enumerate(game_state.room, 1):
-                action = {
-                    CardType.MONSTER: "fight",
-                    CardType.WEAPON: "take",
-                    CardType.POTION: "heal",
-                }[card.type]
-                options.append(f"[bold white]{action} {i}[/bold white]")
-
-        if game_state.last_room_avoided:
-            options.append("[dim red](Cannot avoid two rooms in a row)[/dim red]")
+                action = CardAction[card.type]
+                options.append(f"[bold white]{action}{i}[/bold white]")
 
         actions = Panel(
             "Commands: " + ", ".join(options),
             title="[bold]Actions[/bold]",
             box=ROUNDED,
             padding=(0, 1),
+            width=total_width,
             height=actions_height,
         )
         self.console.print(actions)

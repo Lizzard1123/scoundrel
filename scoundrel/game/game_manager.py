@@ -1,7 +1,7 @@
 # scoundrel/game/game_manager.py
 from typing import List, Optional, Tuple
 from scoundrel.models.game_state import GameState
-from scoundrel.models.card import Card, CardType
+from scoundrel.models.card import Card, CardAction, CardType
 from scoundrel.game.deck import Deck
 from scoundrel.game.combat import Combat
 from scoundrel.ui.terminal_ui import TerminalUI
@@ -17,13 +17,23 @@ class GameManager:
         self.state.dungeon = Deck.create_deck()
         self.draw_room()
 
+    # Fresh room state
     def draw_room(self):
         # Only draw if there's 1 or 0 cards in the room
-        if len(self.state.room) <= 1:
-            cards_needed = 4 - len(self.state.room)
-            for _ in range(cards_needed):
-                if self.state.dungeon:
-                    self.state.room.append(self.state.dungeon.pop())
+        self.state.last_room_avoided = False
+        self.state.used_potion = False
+        cards_needed = 4 - len(self.state.room)
+        for _ in range(cards_needed):
+            if self.state.dungeon:
+                self.state.room.append(self.state.dungeon.pop(0))
+
+    def avoid_room(self):
+        if not self.state.can_avoid:
+            return False
+        self.state.dungeon.extend(self.state.room)
+        self.state.room = []
+        self.state.last_room_avoided = True
+        return True
 
     def parse_command(self, command: str) -> Tuple[str, int]:
         """Parse command string into action and card index"""
@@ -39,7 +49,7 @@ class GameManager:
             try:
                 index = int(index)
                 if 1 <= index <= len(self.state.room):
-                    return action, index
+                    return str.lower(action).strip(), index
             except ValueError:
                 pass
         elif len(parts) == 1:
@@ -48,11 +58,7 @@ class GameManager:
                 index = int(parts[0])
                 if 1 <= index <= len(self.state.room):
                     card = self.state.room[index - 1]
-                    action = {
-                        CardType.MONSTER: "fight",
-                        CardType.WEAPON: "take",
-                        CardType.POTION: "heal",
-                    }[card.type]
+                    action = str.lower(CardAction[card.type]).strip()
                     return action, index
             except ValueError:
                 pass
@@ -69,9 +75,8 @@ class GameManager:
             self.state.equipped_weapon = card
 
         elif card.type == CardType.POTION:
-            if not any(
-                c.type == CardType.POTION for c in self.state.discard
-            ):  # First potion this turn
+            if not self.state.used_potion: # First potion this turn
+                self.state.used_potion = True
                 self.state.health = min(20, self.state.health + card.value)
             self.state.discard.append(card)
 
@@ -84,14 +89,6 @@ class GameManager:
                 self.state.discard.append(card)
             self.state.health -= damage
 
-    def avoid_room(self):
-        if self.state.last_room_avoided:
-            return False
-        self.state.dungeon.extend(self.state.room)
-        self.state.room = []
-        self.state.last_room_avoided = True
-        return True
-
     def play_turn(self):
         self.ui.display_game_state(self.state)
 
@@ -100,6 +97,7 @@ class GameManager:
 
         self.ui.display_game_state(self.state)
 
+        # Parse input and take action loop
         while True:
             try:
                 command = input("\nEnter command: ").strip()
@@ -115,22 +113,17 @@ class GameManager:
                     if self.avoid_room():
                         break
                     else:
-                        print("Cannot avoid two rooms in a row!")
+                        print("Cannot avoid this room... Good Luck")
                 else:
                     card = self.state.room[index - 1]
-                    expected_action = {
-                        CardType.MONSTER: "fight",
-                        CardType.WEAPON: "take",
-                        CardType.POTION: "heal",
-                    }[card.type]
+                    expected_action = str.lower(CardAction[card.type]).strip()
 
                     if action != expected_action:
-                        print(f"Invalid action! Use '{expected_action}' for this card")
+                        print(f"Invalid action! Use '{str.lower(expected_action).strip()}' for this card")
                         continue
 
                     self.state.room.pop(index - 1)
                     self.handle_card(card)
-                    self.state.last_room_avoided = False
                     break
 
             except (ValueError, IndexError):

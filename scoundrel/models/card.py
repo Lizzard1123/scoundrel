@@ -14,7 +14,17 @@ class CardType(Enum):
     WEAPON = "Weapon"
     POTION = "Potion"
 
+CardAction = {
+    CardType.MONSTER: "Fight ",
+    CardType.WEAPON:  "Take  ",
+    CardType.POTION:  "Heal  ",
+}
 
+CardColor = {
+    CardType.MONSTER: "red",
+    CardType.WEAPON: "yellow",
+    CardType.POTION: "green",
+}
 @dataclass
 class Card:
     value: int

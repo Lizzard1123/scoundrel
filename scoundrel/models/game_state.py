@@ -10,8 +10,17 @@ class GameState:
     discard: List[Card] = field(default_factory=list)
     equipped_weapon: Optional[Card] = None
     weapon_monsters: List[Card] = field(default_factory=list)
+    used_potion: bool = False
     health: int = 20
     last_room_avoided: bool = False
+
+    @property
+    def can_avoid(self) -> bool:
+        return (not self.last_room_avoided) and len(self.room) == 4
+
+    @property
+    def can_use_potion(self) -> bool:
+        return not self.used_potion
 
     @property
     def game_over(self) -> bool:

@@ -56,5 +56,9 @@ class GameState:
         return not self.used_potion
 
     @property
-    def game_over(self) -> bool:
+    def lost(self) -> bool:
         return self.health <= 0 or (len(self.dungeon) == 0 and len(self.room) == 0)
+
+    @property
+    def game_over(self) -> bool:
+        return self.lost or self.exit

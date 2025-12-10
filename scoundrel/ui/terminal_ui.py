@@ -13,6 +13,16 @@ from scoundrel.models.card import Card, CardAction, CardColor, CardType
 class TerminalUI:
     def __init__(self):
         self.console = Console()
+        # Get terminal height
+        self.terminal_height = self.console.height
+
+        # Calculate required height for our layout
+        self.header_height = 4
+        self.room_height = 5
+        self.actions_height = 3
+        self.total_height = self.header_height + self.room_height + self.actions_height
+        self.total_width = 88
+
 
     def create_card_panel(self, card: Card, index: int, game_state: GameState) -> Panel:
         """Create a stylized panel for a card"""
@@ -53,36 +63,17 @@ class TerminalUI:
             )
         return result
 
-    def display_game_state(self, game_state: GameState):
-        """Display the game state layout at the bottom of the screen"""
-        self.console.clear()
-
-        # Get terminal height
-        terminal_height = self.console.height
-
-        # Calculate required height for our layout
-        header_height = 4
-        room_height = 5
-        actions_height = 3
-        total_height = header_height + room_height + actions_height
-        total_width = 88
-
-        # Print newlines to push content to bottom
-        padding_lines = terminal_height - total_height - 1  # -1 for input prompt
-        if padding_lines > 0:
-            self.console.print("\n" * padding_lines, end="")
-
-        # Create and print header
+    def print_game_header_panel(self):
         health_color = (
             "green"
-            if game_state.health > 10
-            else "yellow" if game_state.health > 5 else "red"
+            if self.game_state.health > 10
+            else "yellow" if self.game_state.health > 5 else "red"
         )
         header_content = (
-            f"[bold {health_color}]Health: {game_state.health}/20[/bold {health_color}]  "
-            f"[blue]Dungeon: {len(game_state.dungeon)}[/blue]  "
-            f"[gray]Discard: {len(game_state.discard)}[/gray]\n"
-            f"{self.create_weapon_stack(game_state.equipped_weapon, game_state.weapon_monsters)}"
+            f"[bold {health_color}]Health: {self.game_state.health}/20[/bold {health_color}]  "
+            f"[blue]Dungeon: {len(self.game_state.dungeon)}[/blue]  "
+            f"[gray]Discard: {len(self.game_state.discard)}[/gray]\n"
+            f"{self.create_weapon_stack(self.game_state.equipped_weapon, self.game_state.weapon_monsters)}"
         )
 
         header = Panel(
@@ -90,29 +81,39 @@ class TerminalUI:
             title="[bold]Scoundrel[/bold]",
             box=ROUNDED,
             padding=(0, 1),
-            width=total_width,
-            height=header_height,
+            width=self.total_width,
+            height=self.header_height,
         )
         self.console.print(header)
 
-        # Check if game over
-        if(game_state.game_over):
-            game_over_panel = Panel(
-                Align.center(f"Score: {game_state.score}", vertical="middle"),
-                title="[bold red]Game Over[/bold red]",
-                box=ROUNDED,
-                padding=(0, 1),
-                width=total_width,
-                height= room_height + actions_height,
-            )
-            self.console.print(game_over_panel)
-            return
+    def print_game_over_panel(self):
+        over_color_matrix = {
+            (True, False): "red",
+            (False, False): "green",
+            (False, True): "yellow",
+            (True, True): "yellow",
+        }
+        over_color = over_color_matrix[(self.game_state.lost, self.game_state.exit)]
+        title_content = "Game Over" if self.game_state.lost else "Success"
+        over_title = f"[bold {over_color}]{title_content}[/bold {over_color}]"
+        over_content = f"Score: {self.game_state.score}" if not self.game_state.exit else "Exited"
+        game_over_height = self.room_height + self.actions_height + (1 if self.game_state.exit else 0)
+        game_over_panel = Panel(
+            Align.center(over_content, vertical="middle"),
+            title=over_title,
+            border_style=over_color,
+            box=ROUNDED,
+            padding=(0, 1),
+            width=self.total_width,
+            height= game_over_height,
+        )
+        self.console.print(game_over_panel)
 
-        # Create and print room display
+    def print_game_cards_panel(self):
         room_cards = []
-        if game_state.room:
-            for i, card in enumerate(game_state.room, 1):
-                room_cards.append(self.create_card_panel(card, i, game_state))
+        if self.game_state.room:
+            for i, card in enumerate(self.game_state.room, 1):
+                room_cards.append(self.create_card_panel(card, i, self.game_state))
 
         room_display = Panel(
             Columns(room_cards, padding=1, width=20) if room_cards else "Empty room",
@@ -120,17 +121,17 @@ class TerminalUI:
             border_style="blue",
             box=ROUNDED,
             padding=(0, 1),
-            width=total_width,
-            height=room_height,
+            width=self.total_width,
+            height=self.room_height,
         )
         self.console.print(room_display)
 
-        # Create and print actions
+    def print_game_actions_panel(self):
         options = []
-        if game_state.room:
-            if game_state.can_avoid:
+        if self.game_state.room:
+            if self.game_state.can_avoid:
                 options.append("[bold white]avoid[/bold white]")
-            for i, card in enumerate(game_state.room, 1):
+            for i, card in enumerate(self.game_state.room, 1):
                 action = CardAction[card.type]
                 options.append(f"[bold white]{action}{i}[/bold white]")
 
@@ -139,7 +140,31 @@ class TerminalUI:
             title="[bold]Actions[/bold]",
             box=ROUNDED,
             padding=(0, 1),
-            width=total_width,
-            height=actions_height,
+            width=self.total_width,
+            height=self.actions_height,
         )
         self.console.print(actions)
+
+    def display_game_state(self, game_state: GameState):
+        """Display the game state layout at the bottom of the screen"""
+        self.console.clear()
+        self.game_state = game_state
+
+        # Print newlines to push content to bottom
+        padding_lines = self.terminal_height - self.total_height - 1  # -1 for input prompt
+        if padding_lines > 0:
+            self.console.print("\n" * padding_lines, end="")
+
+        # Create and print header
+        self.print_game_header_panel()
+
+        # Check if game over
+        if(game_state.game_over):
+            self.print_game_over_panel()
+            return
+
+        # Create and print room display
+        self.print_game_cards_panel()
+
+        # Create and print actions
+        self.print_game_actions_panel()

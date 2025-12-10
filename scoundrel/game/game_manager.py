@@ -116,12 +116,16 @@ class GameManager:
                 self.command_text = "Exited"
                 self.state.exit = True
             case Action.AVOID:
+                if(self.state.game_over):
+                    return
                 if self.state.can_avoid:
                     self.command_text = "Avoided"
                     self.avoid_room()
                 else:
                     self.command_text = "Cannot avoid this room... Good Luck"
             case Action.USE_1 | Action.USE_2 | Action.USE_3 | Action.USE_4:
+                if(self.state.game_over):
+                    return
                 if(action.value >= len(self.state.room)):
                     self.command_text = f"Pick within 1-{len(self.state.room)}"
                 else:
@@ -144,10 +148,17 @@ class GameManager:
             if self.state.game_over:
                 self.command_text = "Press \'R\' to restart or \'E\' to exit"
             self.command_text += "\nEnter command: "
-            command = input(self.command_text).strip()
+            command = None
+            try:
+                command = input(self.command_text).strip()
+            except:
+                self.execute_turn(Action.EXIT)
+                continue
             # Parse input and execute
             action = self.parse_command(command)
             if action == Action.INVALID:
                 self.command_text = "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
                 continue
             self.execute_turn(action)
+        # Final game screen refresh
+        self.ui.display_game_state(self.state)

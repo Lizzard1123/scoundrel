@@ -24,9 +24,16 @@ class TerminalUI:
 
         content = f"{action}[bold {color}]{str(card)}[/bold {color}]"
 
+        subtext = ""
+        if not game_state.can_use_potion and card.type == CardType.POTION:
+            subtext = "Discard"
+        if game_state.equipped_weapon and card.type == CardType.WEAPON:
+            subtext = "Replace"
+
         return Panel(
             content,
             title=title,
+            subtitle=subtext,
             border_style=color,
             box=box.ROUNDED,
             width=20,

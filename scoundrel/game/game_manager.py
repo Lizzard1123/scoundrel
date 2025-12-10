@@ -1,7 +1,7 @@
 # scoundrel/game/game_manager.py
 from typing import List, Optional, Tuple
 from scoundrel.models.game_state import GameState
-from scoundrel.models.card import Card, CardAction, CardType
+from scoundrel.models.card import Card, CardAction, CardEffect, CardType
 from scoundrel.game.deck import Deck
 from scoundrel.game.combat import Combat
 from scoundrel.ui.terminal_ui import TerminalUI
@@ -10,12 +10,14 @@ from scoundrel.ui.terminal_ui import TerminalUI
 class GameManager:
     def __init__(self):
         self.state = GameState()
+        command_text = ""
         self.ui = TerminalUI()
         self.setup_game()
 
     def setup_game(self):
         self.state.dungeon = Deck.create_deck()
         self.draw_room()
+        self.command_text = ""
 
     def restart(self):
         self.state = GameState()
@@ -23,9 +25,11 @@ class GameManager:
 
     # Fresh room state
     def draw_room(self):
+        if len(self.state.room) == 1:
+            # Reset after full room completed
+            self.state.last_room_avoided = False
+            self.state.used_potion = False
         # Only draw if there's 1 or 0 cards in the room
-        self.state.last_room_avoided = False
-        self.state.used_potion = False
         cards_needed = 4 - len(self.state.room)
         for _ in range(cards_needed):
             if self.state.dungeon:
@@ -101,50 +105,53 @@ class GameManager:
                 self.state.discard.append(card)
             self.state.health -= damage
 
-    def play_turn(self):
-        self.ui.display_game_state(self.state)
+        return CardEffect[card.type] + str(card)
 
+    def play_turn(self):
         if len(self.state.room) <= 1:
             self.draw_room()
 
-        self.ui.display_game_state(self.state)
-
         # Parse input and take action loop
         while True:
+            self.ui.display_game_state(self.state)
             try:
-                command_text = "\nEnter command: " if not self.state.game_over else "Press \'R\' to restart or \'E\' to exit"
-                command = input(command_text).strip()
+                if self.state.game_over:
+                    self.command_text = "Press \'R\' to restart or \'E\' to exit"
+                self.command_text += "\nEnter command: "
+                command = input(self.command_text).strip()
                 action, index = self.parse_command(command)
 
                 if action == "restart":
                     self.restart()
-                    break
+                    self.command_text = "Restarted"
+                    continue
 
                 if action == "exit":
                     self.state.exit = True
                     break
 
                 if action == "invalid":
-                    print(
-                        "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
-                    )
+                    self.command_text = "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
                     continue
 
                 if action == "avoid":
                     if self.avoid_room():
+                        self.command_text = "Avoided"
                         break
                     else:
-                        print("Cannot avoid this room... Good Luck")
+                        self.command_text = "Cannot avoid this room... Good Luck"
+                        continue
                 else:
                     card = self.state.room[index - 1]
                     expected_action = str.lower(CardAction[card.type]).strip()
 
                     if action != expected_action:
-                        print(f"Invalid action! Use '{str.lower(expected_action).strip()}' for this card")
+                        self.command_text = f"Invalid action! Use '{str.lower(expected_action).strip()}' for this card"
                         continue
 
                     self.state.room.pop(index - 1)
-                    self.handle_card(card)
+                    log = self.handle_card(card)
+                    self.command_text = log
                     break
 
             except (ValueError, IndexError):

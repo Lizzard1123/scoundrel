@@ -20,6 +20,12 @@ CardAction = {
     CardType.POTION:  "Heal  ",
 }
 
+CardEffect = {
+    CardType.MONSTER: "Fought ",
+    CardType.WEAPON:  "Took ",
+    CardType.POTION:  "Healed ",
+}
+
 CardColor = {
     CardType.MONSTER: "red",
     CardType.WEAPON: "yellow",

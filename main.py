@@ -7,8 +7,7 @@ def main():
     print("Welcome to Scoundrel!")
     print("====================")
 
-    while game.play_turn():
-        pass
+    game.ui_loop()
 
     # Game over
     print(f"\nGame Over! Final Score: {game.state.score}")

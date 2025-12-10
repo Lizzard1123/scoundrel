@@ -1,8 +1,17 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Optional
 from scoundrel.models.card import Card, CardType
 
-
+class Action(Enum):
+    USE_1 = 0
+    USE_2 = 1
+    USE_3 = 2
+    USE_4 = 3
+    RESTART = 4
+    EXIT = 5
+    INVALID = 6
+    AVOID = 7
 @dataclass
 class GameState:
     dungeon: List[Card] = field(default_factory=list)

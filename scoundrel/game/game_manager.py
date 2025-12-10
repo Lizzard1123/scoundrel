@@ -1,6 +1,6 @@
 # scoundrel/game/game_manager.py
 from typing import List, Optional, Tuple
-from scoundrel.models.game_state import GameState
+from scoundrel.models.game_state import Action, GameState
 from scoundrel.models.card import Card, CardAction, CardEffect, CardType
 from scoundrel.game.deck import Deck
 from scoundrel.game.combat import Combat
@@ -10,7 +10,7 @@ from scoundrel.ui.terminal_ui import TerminalUI
 class GameManager:
     def __init__(self):
         self.state = GameState()
-        command_text = ""
+        self.command_text = ""
         self.ui = TerminalUI()
         self.setup_game()
 
@@ -36,50 +36,46 @@ class GameManager:
                 self.state.room.append(self.state.dungeon.pop(0))
 
     def avoid_room(self):
-        if not self.state.can_avoid:
-            return False
         self.state.dungeon.extend(self.state.room)
         self.state.room = []
         self.state.last_room_avoided = True
-        return True
 
-    def parse_command(self, command: str) -> Tuple[str, int]:
+    def parse_command(self, command: str) -> Action:
         """Parse command string into action and card index"""
         parts = command.lower().strip().split()
-
-        # Handle avoid command
-        if parts[0] == "avoid" or parts[0] == "0":
-            return "avoid", 0
-
-        # Handle restart command
-        if parts[0] == "r":
-            return "restart", 0
-
-        # Handle exit command
-        if parts[0] == "e":
-            return "exit", 0
-
-        # Handle card commands
-        if len(parts) == 2:
-            action, index = parts
-            try:
-                index = int(index)
-                if 1 <= index <= len(self.state.room):
-                    return str.lower(action).strip(), index
-            except ValueError:
-                pass
-        elif len(parts) == 1:
-            # Check if it's just a number
-            try:
-                index = int(parts[0])
-                if 1 <= index <= len(self.state.room):
-                    card = self.state.room[index - 1]
-                    action = str.lower(CardAction[card.type]).strip()
-                    return action, index
-            except ValueError:
-                pass
-
-        return "invalid", 0
+        # Add padding
+        if(len(parts) == 0):
+            parts = (None, None)
+        if(len(parts) == 1):
+            parts = (parts[0], None)
+        if(len(parts) > 2):
+            parts = (parts[0], parts[1])
+        # Match to action
+        match parts:
+            case ("avoid" | "0", _):
+                return Action.AVOID
+            case ("restart" | "r", _):
+                return Action.RESTART
+            case ("exit" | "e", _):
+                return Action.EXIT
+            case(index, None):
+                try:
+                    index = int(str(index))
+                    return list(Action)[index-1]
+                except:
+                    return Action.INVALID
+            case(action, index):
+                try:
+                    index = int(str(index))
+                    card = self.state.room[index-1]
+                    expected_action = str.lower(CardAction[card.type]).strip()
+                    if action != expected_action:
+                        return Action.INVALID
+                    return list(Action)[index-1]
+                except:
+                    return Action.INVALID
+            case _:
+                return Action.INVALID
 
     def handle_card(self, card: Card):
         if card.type == CardType.WEAPON:
@@ -107,54 +103,51 @@ class GameManager:
 
         return CardEffect[card.type] + str(card)
 
-    def play_turn(self):
-        if len(self.state.room) <= 1:
-            self.draw_room()
+    def get_state(self):
+        return self.state
 
-        # Parse input and take action loop
-        while True:
-            self.ui.display_game_state(self.state)
-            try:
-                if self.state.game_over:
-                    self.command_text = "Press \'R\' to restart or \'E\' to exit"
-                self.command_text += "\nEnter command: "
-                command = input(self.command_text).strip()
-                action, index = self.parse_command(command)
-
-                if action == "restart":
-                    self.restart()
-                    self.command_text = "Restarted"
-                    continue
-
-                if action == "exit":
-                    self.state.exit = True
-                    break
-
-                if action == "invalid":
-                    self.command_text = "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
-                    continue
-
-                if action == "avoid":
-                    if self.avoid_room():
-                        self.command_text = "Avoided"
-                        break
-                    else:
-                        self.command_text = "Cannot avoid this room... Good Luck"
-                        continue
+    def execute_turn(self, action: Action):
+        # Execute current action
+        match action:
+            case Action.RESTART:
+                self.command_text = "Restarted"
+                self.restart()
+            case Action.EXIT:
+                self.command_text = "Exited"
+                self.state.exit = True
+            case Action.AVOID:
+                if self.state.can_avoid:
+                    self.command_text = "Avoided"
+                    self.avoid_room()
                 else:
-                    card = self.state.room[index - 1]
-                    expected_action = str.lower(CardAction[card.type]).strip()
-
-                    if action != expected_action:
-                        self.command_text = f"Invalid action! Use '{str.lower(expected_action).strip()}' for this card"
-                        continue
-
-                    self.state.room.pop(index - 1)
+                    self.command_text = "Cannot avoid this room... Good Luck"
+            case Action.USE_1 | Action.USE_2 | Action.USE_3 | Action.USE_4:
+                if(action.value >= len(self.state.room)):
+                    self.command_text = f"Pick within 1-{len(self.state.room)}"
+                else:
+                    card = self.state.room[action.value]
+                    self.state.room.pop(action.value)
                     log = self.handle_card(card)
                     self.command_text = log
-                    break
+            case _:
+                self.command_text = "Command not registered!"
+        # Prepare for next turn
+        if len(self.state.room) <= 1:
+            self.draw_room()
+        return
 
-            except (ValueError, IndexError):
-                print("Invalid input! Try again.")
-
-        return not self.state.exit
+    def ui_loop(self):
+        while not self.state.exit:
+            # Display UI
+            self.ui.display_game_state(self.state)
+            # Display log and cmd input
+            if self.state.game_over:
+                self.command_text = "Press \'R\' to restart or \'E\' to exit"
+            self.command_text += "\nEnter command: "
+            command = input(self.command_text).strip()
+            # Parse input and execute
+            action = self.parse_command(command)
+            if action == Action.INVALID:
+                self.command_text = "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
+                continue
+            self.execute_turn(action)

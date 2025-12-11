@@ -13,3 +13,4 @@ dependencies:
     - isort>=5.0.0
     - torch>=2.9.1
     - numpy>=2.2.6
+    - tensorboard>=2.20.0

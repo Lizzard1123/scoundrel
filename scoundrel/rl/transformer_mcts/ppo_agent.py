@@ -54,6 +54,7 @@ class PPOAgent:
         old_masks = torch.stack(memory.masks)
 
         # PPO Update Loop
+        last_metrics = {}
         for _ in range(K_EPOCHS):
             logits, state_values = self.policy(old_states_scal, old_states_seq)
 
@@ -76,10 +77,25 @@ class PPOAgent:
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-EPS_CLIP, 1+EPS_CLIP) * advantages
 
-            loss = -torch.min(surr1, surr2) + 0.5*self.MseLoss(state_values, rewards) - 0.01*dist_entropy
+            policy_loss = (-torch.min(surr1, surr2)).mean()
+            value_loss = self.MseLoss(state_values, rewards)
+            entropy = dist_entropy.mean()
+
+            loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
 
             self.optimizer.zero_grad()
-            loss.mean().backward()
+            loss.backward()
             self.optimizer.step()
 
+            # Keep the latest metrics for optional logging
+            approx_kl = (old_logprobs.detach() - logprobs).mean()
+            last_metrics = {
+                "loss": loss.detach().item(),
+                "policy_loss": policy_loss.detach().item(),
+                "value_loss": value_loss.detach().item(),
+                "entropy": entropy.detach().item(),
+                "approx_kl": approx_kl.detach().item(),
+            }
+
         self.policy_old.load_state_dict(self.policy.state_dict())
+        return last_metrics

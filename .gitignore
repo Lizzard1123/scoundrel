@@ -1,3 +1,7 @@
 *.egg-info/*
 **/__pycache__/*
 **/build/*
+.DS_Store
+scoundrel/rl/transformer_mcts/logs/*
+scoundrel/rl/transformer_mcts/checkpoints/*
+scoundrel/rl/transformer_mcts/runs/*

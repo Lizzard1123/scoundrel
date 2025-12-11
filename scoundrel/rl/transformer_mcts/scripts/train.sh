@@ -11,6 +11,34 @@ LOGDIR="${LOGDIR:-$BASE_DIR/runs}"
 CHECKPOINT="${CHECKPOINT:-$BASE_DIR/checkpoints/ppo_latest.pt}"
 PORT="${PORT:-6006}"
 
+# Handle flags (currently only --clear)
+CLEAR=0
+PASSTHRU=()
+for arg in "$@"; do
+  case "$arg" in
+    --clear)
+      CLEAR=1
+      ;;
+    *)
+      PASSTHRU+=("$arg")
+      ;;
+  esac
+done
+
+# Reset "$@" to passthrough args (handle empty array under 'set -u')
+if ((${#PASSTHRU[@]})); then
+  set -- "${PASSTHRU[@]}"
+else
+  set --
+fi
+
+if [[ "$CLEAR" -eq 1 ]]; then
+  echo "Clearing TensorBoard logs at $LOGDIR and checkpoint $CHECKPOINT"
+  rm -rf "$LOGDIR"
+  rm -f "$CHECKPOINT"
+  exit 0
+fi
+
 mkdir -p "$LOGDIR" "$BASE_DIR/logs" "$(dirname "$CHECKPOINT")"
 
 # Start TensorBoard if it is not already watching this logdir.

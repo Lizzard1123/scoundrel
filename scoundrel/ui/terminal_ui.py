@@ -126,18 +126,26 @@ class TerminalUI:
         )
         self.console.print(room_display)
 
-    def print_game_actions_panel(self):
-        options = []
-        if self.game_state.room:
-            if self.game_state.can_avoid:
-                options.append("[bold white]avoid[/bold white]")
-            for i, card in enumerate(self.game_state.room, 1):
-                action = CardAction[card.type]
-                options.append(f"[bold white]{action}{i}[/bold white]")
+    def print_game_actions_panel(self, override_text: str | None = None, title: str | None = None):
+        """
+        Render the actions box. If override_text is provided, show that instead of the
+        default command list. Useful for agent-driven viewers.
+        """
+        if override_text is None:
+            options = []
+            if self.game_state.room:
+                if self.game_state.can_avoid:
+                    options.append("[bold white]avoid[/bold white]")
+                for i, card in enumerate(self.game_state.room, 1):
+                    action = CardAction[card.type]
+                    options.append(f"[bold white]{action}{i}[/bold white]")
+            body = "Commands: " + ", ".join(options)
+        else:
+            body = override_text
 
         actions = Panel(
-            "Commands: " + ", ".join(options),
-            title="[bold]Actions[/bold]",
+            body,
+            title=title if title else "[bold]Actions[/bold]",
             box=ROUNDED,
             padding=(0, 1),
             width=self.total_width,
@@ -145,8 +153,8 @@ class TerminalUI:
         )
         self.console.print(actions)
 
-    def display_game_state(self, game_state: GameState):
-        """Display the game state layout at the bottom of the screen"""
+    def display_game_state(self, game_state: GameState, actions_override: str | None = None, actions_title: str | None = None):
+        """Display the game state layout at the bottom of the screen."""
         self.console.clear()
         self.game_state = game_state
 
@@ -167,4 +175,4 @@ class TerminalUI:
         self.print_game_cards_panel()
 
         # Create and print actions
-        self.print_game_actions_panel()
+        self.print_game_actions_panel(override_text=actions_override, title=actions_title)

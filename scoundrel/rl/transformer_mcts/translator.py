@@ -92,4 +92,4 @@ class ScoundrelTranslator:
         """Maps model output index back to engine readable action."""
         if action_idx == 4:
             return Action.AVOID
-        return list(Action)[action_idx-1]
+        return list(Action)[action_idx]

@@ -94,8 +94,9 @@ def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, check
             engine_action = translator.decode_action(action)
             engine.execute_turn(engine_action)
             next_state = engine.get_state()
-            done = not next_state.game_over
-            reward = next_state.score
+            done = next_state.game_over
+            # Sparse reward: only give the final run score on terminal step
+            reward = next_state.score if done else 0
 
             # 4. Save to Memory
             memory.states_scal.append(s_scal)

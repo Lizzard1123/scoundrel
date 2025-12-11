@@ -21,9 +21,10 @@ class GameState:
     weapon_monsters: List[Card] = field(default_factory=list)
     used_potion: bool = False
     health: int = 20
+    number_avoided: int = 0
     last_room_avoided: bool = False
     exit: bool = False
-    
+
     @property
     def score(self) -> int:
         if self.exit:

@@ -9,7 +9,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'scoundrel=main:main',
+            'play=main:main',
         ],
     },
 )

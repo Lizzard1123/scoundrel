@@ -19,9 +19,10 @@ class GameManager:
         self.draw_room()
         self.command_text = ""
 
-    def restart(self):
+    def restart(self) -> GameState:
         self.state = GameState()
         self.setup_game()
+        return self.state
 
     # Fresh room state
     def draw_room(self):
@@ -38,6 +39,7 @@ class GameManager:
     def avoid_room(self):
         self.state.dungeon.extend(self.state.room)
         self.state.room = []
+        self.state.number_avoided += 1
         self.state.last_room_avoided = True
 
     def parse_command(self, command: str) -> Action:

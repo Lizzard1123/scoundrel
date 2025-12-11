@@ -91,5 +91,5 @@ class ScoundrelTranslator:
     def decode_action(self, action_idx: int):
         """Maps model output index back to engine readable action."""
         if action_idx == 4:
-            Action.AVOID
+            return Action.AVOID
         return list(Action)[action_idx-1]

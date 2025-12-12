@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Launch TensorBoard for this transformer_mcts trainer and run training.
+# Launch TensorBoard for this transformer_mlp trainer and run training.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"               # scoundrel/rl/transformer_mcts
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"               # scoundrel/rl/transformer_mlp
 REPO_ROOT="$(cd "$BASE_DIR/../../.." && pwd)"          # project root
 
 LOGDIR="${LOGDIR:-$BASE_DIR/runs}"
@@ -51,7 +51,7 @@ fi
 echo "TensorBoard: http://localhost:$PORT/"
 
 cd "$REPO_ROOT"
-python -m scoundrel.rl.transformer_mcts.transformer_mcts \
+python -m scoundrel.rl.transformer_mlp.transformer_mlp \
   --logdir "$LOGDIR" \
   --checkpoint "$CHECKPOINT" \
   "$@"

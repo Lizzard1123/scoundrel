@@ -5,3 +5,4 @@
 scoundrel/rl/transformer_mcts/logs/*
 scoundrel/rl/transformer_mcts/checkpoints/*
 scoundrel/rl/transformer_mcts/runs/*
+scoundrel/rl/transformer_mcts/checkpoints_backup/*

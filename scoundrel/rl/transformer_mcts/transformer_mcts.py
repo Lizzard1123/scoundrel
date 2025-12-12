@@ -9,6 +9,13 @@ import numpy as np
 from collections import deque
 
 from scoundrel.game.game_manager import GameManager
+from scoundrel.rl.transformer_mcts.constants import (
+    TRAIN_MAX_EPISODES,
+    TRAIN_MAX_STEPS_PER_EPISODE,
+    TRAIN_SAVE_INTERVAL,
+    TRAIN_UPDATE_TIMESTEP,
+    TRAIN_RESUME_FROM,
+)
 from scoundrel.rl.transformer_mcts.ppo_agent import PPOAgent
 from scoundrel.rl.transformer_mcts.translator import ScoundrelTranslator
 
@@ -40,7 +47,15 @@ def _default_paths(base_dir: Path):
     return runs, checkpoints
 
 
-def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, checkpoint_path=None, tensorboard=True, save_interval=0):
+def train_scoundrel(
+    engine_instance=None,
+    max_episodes=TRAIN_MAX_EPISODES,
+    log_dir=None,
+    checkpoint_path=None,
+    tensorboard=True,
+    save_interval=TRAIN_SAVE_INTERVAL,
+    resume_path=TRAIN_RESUME_FROM,
+):
     """
     Main entrypoint to train the model.
     """
@@ -68,10 +83,20 @@ def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, check
     memory = Memory()
     writer = SummaryWriter(log_dir=str(log_dir)) if tensorboard else None
 
-    running_reward = 0
-    total_reward = 0
-    best_reward = float("-inf")
-    update_timestep = 2000
+    # Optional resume
+    if resume_path:
+        resume_path = Path(resume_path)
+        if resume_path.exists():
+            state_dict = torch.load(resume_path, map_location="cpu")
+            agent.policy.load_state_dict(state_dict)
+            agent.policy_old.load_state_dict(state_dict)
+            print(f"Resumed training from checkpoint: {resume_path}")
+        else:
+            print(f"Resume path not found, starting fresh: {resume_path}")
+
+    reward_window = deque(maxlen=TRAIN_UPDATE_TIMESTEP)
+    best_raw_score = float("-inf")
+    update_timestep = TRAIN_UPDATE_TIMESTEP
     time_step = 0
     update_step = 0
 
@@ -79,7 +104,7 @@ def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, check
         state = engine.restart()
         ep_reward = 0
 
-        for t in range(100): # Max steps per game
+        for t in range(TRAIN_MAX_STEPS_PER_EPISODE): # Max steps per game
             time_step += 1
 
             # 1. Translate State
@@ -96,7 +121,7 @@ def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, check
             next_state = engine.get_state()
             done = next_state.game_over
             # Sparse reward: only give the final run score on terminal step
-            reward = next_state.score if done else 0
+            reward = ((next_state.score) + 188) / (188 + 30) if done else 0
 
             # 4. Save to Memory
             memory.states_scal.append(s_scal)
@@ -126,24 +151,23 @@ def train_scoundrel(engine_instance=None, max_episodes=1000, log_dir=None, check
             if done:
                 break
 
-        running_reward += ep_reward
-        total_reward += ep_reward
-        best_reward = max(best_reward, ep_reward)
+        reward_window.append(ep_reward)
+        # Convert normalized reward back to raw score for best tracking
+        current_raw_score = ep_reward * (188 + 30) - 188
+        best_raw_score = max(best_raw_score, current_raw_score)
 
         # TensorBoard logging
         if writer:
             writer.add_scalar("episode/reward", ep_reward, i_episode)
             writer.add_scalar("episode/steps", t + 1, i_episode)
-            writer.add_scalar("episode/best_reward_so_far", best_reward, i_episode)
-            writer.add_scalar("episode/avg_reward_all", total_reward / i_episode, i_episode)
-            if i_episode % 50 == 0:
-                avg_reward = running_reward / 50
-                writer.add_scalar("episode/avg_reward_50", avg_reward, i_episode)
-                running_reward = 0
+            writer.add_scalar("episode/best_raw_score_so_far", best_raw_score, i_episode)
+            writer.add_scalar("episode/avg_reward_window", sum(reward_window) / len(reward_window), i_episode)
+
 
         # Periodic checkpointing
         if save_interval and (i_episode % save_interval == 0):
-            torch.save(agent.policy.state_dict(), checkpoint_path)
+            periodic_checkpoint = checkpoint_path.parent / f"ppo_episode_{i_episode}.pt"
+            torch.save(agent.policy.state_dict(), periodic_checkpoint)
 
     print("--- Training Complete ---")
     # Final checkpoint
@@ -184,10 +208,11 @@ def sample_from_model(agent, engine_state):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Scoundrel PPO with optional TensorBoard logging.")
-    parser.add_argument("--max-episodes", type=int, default=200, help="Number of episodes to train.")
+    parser.add_argument("--max-episodes", type=int, default=TRAIN_MAX_EPISODES, help="Number of episodes to train.")
     parser.add_argument("--logdir", type=str, default=None, help="Directory for TensorBoard runs.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to save the final checkpoint.")
-    parser.add_argument("--save-interval", type=int, default=0, help="Episodes between checkpoints (0 to save only at end).")
+    parser.add_argument("--save-interval", type=int, default=TRAIN_SAVE_INTERVAL, help="Episodes between checkpoints (0 to save only at end).")
+    parser.add_argument("--resume-from", type=str, default=TRAIN_RESUME_FROM, help="Optional checkpoint path to resume training from.")
     parser.add_argument("--no-tensorboard", action="store_true", help="Disable TensorBoard logging.")
     return parser.parse_args()
 
@@ -200,6 +225,7 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint,
         tensorboard=not args.no_tensorboard,
         save_interval=args.save_interval,
+        resume_path=args.resume_from,
     )
 
     # Sample run

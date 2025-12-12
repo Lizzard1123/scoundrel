@@ -11,7 +11,16 @@ SCALAR_ENCODER_OUT = 64
 HIDDEN_DIM = 128
 
 # PPO learning
-LR = 3e-4
-GAMMA = 0.99
-EPS_CLIP = 0.2
-K_EPOCHS = 4
+LR = 8e-3
+GAMMA = 0.9
+EPS_CLIP = 0.4
+K_EPOCHS = 8
+
+# Training loop defaults
+TRAIN_MAX_EPISODES = 10000
+TRAIN_MAX_STEPS_PER_EPISODE = 200
+TRAIN_UPDATE_TIMESTEP = 20
+TRAIN_SAVE_INTERVAL = 1000
+
+# Resume training from checkpoint (set to string path or None)
+TRAIN_RESUME_FROM = "/Users/ethan/Desktop/Development/scoundrel/scoundrel/rl/transformer_mcts/checkpoints/ppo_latest.pt"

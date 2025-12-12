@@ -38,6 +38,7 @@ class ScoundrelTranslator:
         if len(game_state.weapon_monsters) > 0:
             wep_last = game_state.weapon_monsters[-1].value / 14.0
         can_run = 1.0 if game_state.can_avoid else 0.0
+        can_heal = 1.0 if game_state.can_use_potion else 0.0
 
         # Encode Room Cards (Simplified: just values/types)
         room_vec = []
@@ -51,7 +52,7 @@ class ScoundrelTranslator:
             c_type = 0 if card.type == CardType.MONSTER else (1 if card.type == CardType.WEAPON else 2)
             room_vec.extend([1, card.value/14.0, c_type])
 
-        scalar_features = [hp, wep_val, wep_last, can_run] + room_vec
+        scalar_features = [hp, wep_val, wep_last, can_run, can_heal] + room_vec
 
         # 2. SEQUENCE FEATURES (The "Known Stack")
         # This is for the Transformer to plan ahead

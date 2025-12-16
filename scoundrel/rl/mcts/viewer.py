@@ -7,7 +7,7 @@ from pathlib import Path
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
-from scoundrel.rl.mcts.constants import MCTS_NUM_SIMULATIONS
+from scoundrel.rl.mcts.constants import MCTS_NUM_SIMULATIONS, MCTS_NUM_WORKERS
 
 
 def _format_action(action: Action) -> str:
@@ -32,17 +32,22 @@ def _denormalize_value(normalized_value: float) -> int:
     return int(normalized_value * 218 - 188)
 
 
-def run_mcts_viewer(num_simulations: int = MCTS_NUM_SIMULATIONS):
+def run_mcts_viewer(
+    num_simulations: int = MCTS_NUM_SIMULATIONS,
+    num_workers: int = MCTS_NUM_WORKERS
+):
     """
     Run interactive viewer with MCTS agent.
     
     Args:
         num_simulations: Number of MCTS simulations per move
+        num_workers: Number of parallel workers (0 or 1 disables parallelization)
     """
-    agent = MCTSAgent(num_simulations=num_simulations)
+    agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
     engine = GameManager()
     
-    actions_title = f"MCTS ({num_simulations} simulations)"
+    parallel_str = f" | {num_workers} workers" if num_workers > 1 else ""
+    actions_title = f"MCTS ({num_simulations} simulations{parallel_str})"
     
     state = engine.restart()
     
@@ -127,13 +132,22 @@ def parse_args():
         default=MCTS_NUM_SIMULATIONS,
         help="Number of MCTS simulations per move"
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=MCTS_NUM_WORKERS,
+        help="Number of parallel workers (0 or 1 disables parallelization)"
+    )
     return parser.parse_args()
 
 
 def main():
     """Entry point for console script."""
     args = parse_args()
-    run_mcts_viewer(num_simulations=args.num_simulations)
+    run_mcts_viewer(
+        num_simulations=args.num_simulations,
+        num_workers=args.num_workers
+    )
 
 
 if __name__ == "__main__":

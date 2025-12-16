@@ -1,11 +1,14 @@
 """
 MCTS Agent implementation for Scoundrel.
 Implements the four phases: Selection, Expansion, Simulation, Backpropagation.
+Supports root parallelization for improved performance.
 """
 import copy
 import random
 import math
-from typing import List, Optional
+from typing import List, Optional, Dict
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import GameState, Action
@@ -15,7 +18,53 @@ from scoundrel.rl.mcts.constants import (
     MCTS_EXPLORATION_CONSTANT,
     MCTS_MAX_DEPTH,
     USE_RANDOM_ROLLOUT,
+    MCTS_NUM_WORKERS,
+    MCTS_PARALLEL_THRESHOLD,
 )
+
+
+def _run_worker_simulations(args: tuple) -> Dict:
+    """
+    Worker function for parallel MCTS simulations.
+    Runs a batch of simulations and returns action statistics.
+    
+    This is a module-level function (not a method) so it can be pickled
+    for multiprocessing.
+    
+    Args:
+        args: Tuple of (game_state, num_simulations, worker_id, exploration_constant, 
+                        max_depth, use_random_rollout)
+        
+    Returns:
+        Dictionary with action statistics: {action: {visits, value}}
+    """
+    game_state, num_simulations, worker_id, exploration_constant, max_depth, use_random_rollout = args
+    
+    # Create a new agent for this worker (each worker is independent)
+    agent = MCTSAgent(
+        num_simulations=num_simulations,
+        exploration_constant=exploration_constant,
+        max_depth=max_depth,
+        use_random_rollout=use_random_rollout,
+        num_workers=0  # Disable parallelization in worker
+    )
+    
+    # Run sequential search
+    root = agent._sequential_search(game_state)
+    
+    # Extract action statistics from root's children
+    action_stats = {}
+    for child in root.children:
+        action_stats[child.action] = {
+            'visits': child.visits,
+            'value': child.value
+        }
+    
+    return {
+        'action_stats': action_stats,
+        'worker_id': worker_id,
+        'root_visits': root.visits
+    }
 
 
 class MCTSAgent:
@@ -29,6 +78,7 @@ class MCTSAgent:
         exploration_constant: float = MCTS_EXPLORATION_CONSTANT,
         max_depth: int = MCTS_MAX_DEPTH,
         use_random_rollout: bool = USE_RANDOM_ROLLOUT,
+        num_workers: int = MCTS_NUM_WORKERS,
     ):
         """
         Initialize MCTS agent.
@@ -38,16 +88,19 @@ class MCTSAgent:
             exploration_constant: UCB1 exploration constant
             max_depth: Maximum depth for simulation rollouts
             use_random_rollout: Whether to use random policy for rollouts
+            num_workers: Number of parallel workers (0 or 1 disables parallelization)
         """
         self.num_simulations = num_simulations
         self.exploration_constant = exploration_constant
         self.max_depth = max_depth
         self.use_random_rollout = use_random_rollout
+        self.num_workers = num_workers
         self.translator = ScoundrelTranslator()
     
     def select_action(self, game_state: GameState) -> int:
         """
         Select the best action using MCTS.
+        Uses parallel execution if num_workers > 1 and num_simulations is high enough.
         
         Args:
             game_state: Current game state
@@ -55,7 +108,39 @@ class MCTSAgent:
         Returns:
             Action index (0-4)
         """
-        # Create root node
+        # Determine if parallelization should be used
+        use_parallel = (
+            self.num_workers > 1 and 
+            self.num_simulations >= MCTS_PARALLEL_THRESHOLD
+        )
+        
+        if use_parallel:
+            root = self._parallel_search(game_state)
+        else:
+            root = self._sequential_search(game_state)
+        
+        # Store root for get_action_stats
+        self._last_root = root
+        
+        # Select action with most visits
+        if not root.children:
+            # No simulations completed, return random valid action
+            valid_actions = self._get_valid_actions(game_state)
+            return random.choice(valid_actions) if valid_actions else 0
+        
+        best_child = root.most_visited_child()
+        return best_child.action
+    
+    def _sequential_search(self, game_state: GameState) -> MCTSNode:
+        """
+        Run MCTS simulations sequentially (original implementation).
+        
+        Args:
+            game_state: Current game state
+            
+        Returns:
+            Root node with simulation results
+        """
         root = self._create_node(game_state)
         
         # Run MCTS simulations
@@ -77,17 +162,96 @@ class MCTSAgent:
             # 4. Backpropagation: Update all nodes in path
             self._backpropagate(node, reward)
         
-        # Store root for get_action_stats
-        self._last_root = root
+        return root
+    
+    def _parallel_search(self, game_state: GameState) -> MCTSNode:
+        """
+        Run MCTS simulations in parallel using root parallelization.
+        Each worker runs independent simulations, then results are aggregated.
         
-        # Select action with most visits
-        if not root.children:
-            # No simulations completed, return random valid action
-            valid_actions = self._get_valid_actions(game_state)
-            return random.choice(valid_actions) if valid_actions else 0
+        Args:
+            game_state: Current game state
+            
+        Returns:
+            Aggregated root node with combined simulation results
+        """
+        # Ensure we use 'spawn' method for multiprocessing (required on macOS)
+        ctx = mp.get_context('spawn')
         
-        best_child = root.most_visited_child()
-        return best_child.action
+        # Divide simulations among workers
+        sims_per_worker = self.num_simulations // self.num_workers
+        remaining_sims = self.num_simulations % self.num_workers
+        
+        # Create worker arguments - include all parameters needed to recreate agent
+        worker_args = []
+        for i in range(self.num_workers):
+            # Distribute remaining simulations to first workers
+            num_sims = sims_per_worker + (1 if i < remaining_sims else 0)
+            worker_args.append((
+                game_state, 
+                num_sims, 
+                i,
+                self.exploration_constant,
+                self.max_depth,
+                self.use_random_rollout
+            ))
+        
+        # Run workers in parallel using spawn context
+        with ProcessPoolExecutor(max_workers=self.num_workers, mp_context=ctx) as executor:
+            worker_results = list(executor.map(
+                _run_worker_simulations,
+                worker_args
+            ))
+        
+        # Aggregate results from all workers
+        return self._aggregate_roots(worker_results, game_state)
+    
+    def _aggregate_roots(
+        self, 
+        worker_results: List[Dict], 
+        game_state: GameState
+    ) -> MCTSNode:
+        """
+        Aggregate results from multiple worker trees into a single root node.
+        Combines visit counts and values for each action.
+        
+        Args:
+            worker_results: List of dictionaries with action statistics from each worker
+            game_state: Original game state (for creating aggregated root)
+            
+        Returns:
+            Root node with aggregated statistics
+        """
+        # Create aggregated root node
+        root = self._create_node(game_state)
+        root.untried_actions = []  # Mark as fully expanded
+        
+        # Collect all actions seen across workers
+        action_stats = {}  # action -> {visits, value}
+        
+        for worker_result in worker_results:
+            for action, stats in worker_result['action_stats'].items():
+                if action not in action_stats:
+                    action_stats[action] = {'visits': 0, 'value': 0.0}
+                action_stats[action]['visits'] += stats['visits']
+                action_stats[action]['value'] += stats['value']
+        
+        # Create child nodes for each action with aggregated stats
+        for action, stats in action_stats.items():
+            # Create a dummy state for the child (not used for action selection)
+            child = MCTSNode(
+                state_hash=f"aggregated_child_{action}",
+                parent=root,
+                action=action,
+                visits=stats['visits'],
+                value=stats['value']
+            )
+            root.children.append(child)
+        
+        # Update root visits (sum of all child visits)
+        root.visits = sum(child.visits for child in root.children)
+        
+        return root
     
     def get_action_stats(self, game_state: GameState):
         """

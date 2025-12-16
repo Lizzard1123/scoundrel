@@ -20,8 +20,13 @@ EVAL_VERBOSE = True  # Print progress during evaluation
 # Heuristic rollout: Slower, better per-simulation, works with fewer simulations
 USE_RANDOM_ROLLOUT = True  # Use random policy for rollouts (vs heuristic)
 
+# Parallelization
+MCTS_NUM_WORKERS = 8  # Number of parallel workers (0 or 1 = no parallelization)
+MCTS_PARALLEL_THRESHOLD = 500  # Minimum simulations to benefit from parallelization
+
 # Recommended configurations:
 # - High simulations (500+): USE_RANDOM_ROLLOUT = True (volume compensates)
 # - Low simulations (50-200): USE_RANDOM_ROLLOUT = False (quality matters more)
 # - Interactive play: USE_RANDOM_ROLLOUT = False (better per-move quality)
+# - Parallelization: Use MCTS_NUM_WORKERS = CPU count when num_simulations >= 500
 

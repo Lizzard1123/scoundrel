@@ -11,6 +11,7 @@ from scoundrel.game.game_manager import GameManager
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
 from scoundrel.rl.mcts.constants import (
     MCTS_NUM_SIMULATIONS,
+    MCTS_NUM_WORKERS,
     EVAL_NUM_GAMES,
     EVAL_SAVE_INTERVAL,
     EVAL_VERBOSE,
@@ -138,6 +139,7 @@ def evaluate_mcts(
     save_interval: int = EVAL_SAVE_INTERVAL,
     verbose: bool = EVAL_VERBOSE,
     resume_from: str = None,
+    num_workers: int = MCTS_NUM_WORKERS,
 ):
     """
     Evaluate MCTS agent by playing multiple games and collecting statistics.
@@ -148,6 +150,7 @@ def evaluate_mcts(
         save_interval: Save statistics every N games
         verbose: Print progress
         resume_from: Path to resume statistics from
+        num_workers: Number of parallel workers for MCTS (0 or 1 disables parallelization)
     """
     base_dir = Path(__file__).parent
     logs_dir, stats_file = _default_paths(base_dir)
@@ -155,10 +158,12 @@ def evaluate_mcts(
     print(f"--- Starting MCTS Evaluation ---")
     print(f"Simulations per move: {num_simulations}")
     print(f"Number of games: {num_games}")
+    print(f"Number of workers: {num_workers}")
+    print(f"Parallelization: {'Enabled' if num_workers > 1 else 'Disabled'}")
     print(f"Logs directory: {logs_dir}")
     
     # Initialize agent and engine
-    agent = MCTSAgent(num_simulations=num_simulations)
+    agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
     engine = GameManager()
     
     # Load or create statistics
@@ -248,6 +253,12 @@ def parse_args():
         help="Number of games to play"
     )
     parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=MCTS_NUM_WORKERS,
+        help="Number of parallel workers (0 or 1 disables parallelization)"
+    )
+    parser.add_argument(
         "--save-interval",
         type=int,
         default=EVAL_SAVE_INTERVAL,
@@ -275,6 +286,7 @@ if __name__ == "__main__":
         save_interval=args.save_interval,
         verbose=not args.quiet,
         resume_from=args.resume_from,
+        num_workers=args.num_workers,
     )
 
 

@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
-from scoundrel.rl.transformer_mcts.constants import EPS_CLIP, GAMMA, K_EPOCHS, LR
-from scoundrel.rl.transformer_mcts.network import ScoundrelNet
+from scoundrel.rl.transformer_mlp.constants import EPS_CLIP, GAMMA, K_EPOCHS, LR
+from scoundrel.rl.transformer_mlp.network import ScoundrelNet
 
 
 class PPOAgent:

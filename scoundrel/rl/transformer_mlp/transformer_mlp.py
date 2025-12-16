@@ -9,15 +9,16 @@ import numpy as np
 from collections import deque
 
 from scoundrel.game.game_manager import GameManager
-from scoundrel.rl.transformer_mcts.constants import (
+from scoundrel.rl.transformer_mlp.constants import (
     TRAIN_MAX_EPISODES,
     TRAIN_MAX_STEPS_PER_EPISODE,
     TRAIN_SAVE_INTERVAL,
     TRAIN_UPDATE_TIMESTEP,
     TRAIN_RESUME_FROM,
+    STACK_SEQ_LEN,
 )
-from scoundrel.rl.transformer_mcts.ppo_agent import PPOAgent
-from scoundrel.rl.transformer_mcts.translator import ScoundrelTranslator
+from scoundrel.rl.transformer_mlp.ppo_agent import PPOAgent
+from scoundrel.rl.translator import ScoundrelTranslator
 
 # Simple Memory Buffer
 class Memory:
@@ -74,7 +75,7 @@ def train_scoundrel(
     print(f"--- Starting Scoundrel Training (PPO) ---")
 
     # Initialize objects
-    translator = ScoundrelTranslator()
+    translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
     game_state = engine.restart()
     s_scal, s_seq = translator.encode_state(game_state)
     scalar_dim = s_scal.shape[1]
@@ -120,8 +121,8 @@ def train_scoundrel(
             engine.execute_turn(engine_action)
             next_state = engine.get_state()
             done = next_state.game_over
-            # Sparse reward: only give the final run score on terminal step
-            reward = ((next_state.score) + 188) / (188 + 30) if done else 0
+            # Normalize reward to [0, 1]: min=-188, max=30, range=218
+            reward = ((next_state.score + 188) / 218) if done else 0
 
             # 4. Save to Memory
             memory.states_scal.append(s_scal)
@@ -153,7 +154,7 @@ def train_scoundrel(
 
         reward_window.append(ep_reward)
         # Convert normalized reward back to raw score for best tracking
-        current_raw_score = ep_reward * (188 + 30) - 188
+        current_raw_score = ep_reward * 218 - 188
         best_raw_score = max(best_raw_score, current_raw_score)
 
         # TensorBoard logging

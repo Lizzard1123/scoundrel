@@ -6,9 +6,10 @@ import torch.nn.functional as F
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
-from scoundrel.rl.transformer_mcts.ppo_agent import PPOAgent
-from scoundrel.rl.transformer_mcts.transformer_mcts import _default_paths
-from scoundrel.rl.transformer_mcts.translator import ScoundrelTranslator
+from scoundrel.rl.transformer_mlp.ppo_agent import PPOAgent
+from scoundrel.rl.transformer_mlp.transformer_mlp import _default_paths
+from scoundrel.rl.transformer_mlp.constants import STACK_SEQ_LEN
+from scoundrel.rl.translator import ScoundrelTranslator
 
 
 def _load_agent(checkpoint_path: Path, input_dim: int) -> PPOAgent:
@@ -46,7 +47,7 @@ def _greedy_action(agent: PPOAgent, translator: ScoundrelTranslator, state):
 
 def run_viewer(checkpoint: Path, label: str):
     engine = GameManager()
-    translator = ScoundrelTranslator()
+    translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
 
     # Determine input dim
     init_state = engine.restart()

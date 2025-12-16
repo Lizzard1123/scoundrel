@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scoundrel.rl.transformer_mcts.constants import ACTION_SPACE, CARD_EMBEDDING_DIM, HIDDEN_DIM, NUM_CARDS, SCALAR_ENCODER_OUT, TRANSFORMER_NHEAD, TRANSFORMER_NLAYERS
+from scoundrel.rl.transformer_mlp.constants import ACTION_SPACE, CARD_EMBEDDING_DIM, HIDDEN_DIM, NUM_CARDS, SCALAR_ENCODER_OUT, TRANSFORMER_NHEAD, TRANSFORMER_NLAYERS
 
 class ScoundrelNet(nn.Module):
     """

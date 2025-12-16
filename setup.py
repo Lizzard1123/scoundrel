@@ -10,6 +10,7 @@ setup(
     entry_points={
         'console_scripts': [
             'play=main:main',
+            'mcts=scoundrel.rl.mcts.mcts:main',
         ],
     },
 )

@@ -1,6 +1,6 @@
 # Environment
-STACK_SEQ_LEN = 40  # Max cards in face down dungeon deck
-NUM_CARDS = 53
+STACK_SEQ_LEN = 40  # Max cards in dungeon deck (44 total - 4 dealt to room at start)
+NUM_CARDS = 45  # Card embeddings: 0=pad, 1-44=actual cards
 ACTION_SPACE = 5  # 0-3: Pick Card 1-4, 4: Run/Skip Room
 
 # Architecture

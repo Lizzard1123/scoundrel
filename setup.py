@@ -10,7 +10,8 @@ setup(
     entry_points={
         'console_scripts': [
             'play=main:main',
-            'mcts=scoundrel.rl.mcts.mcts:main',
+            'mcts=scoundrel.rl.mcts.viewer:main',
+            'mcts-plot=scoundrel.rl.mcts.plot_episode:main',
         ],
     },
 )

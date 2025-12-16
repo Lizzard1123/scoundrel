@@ -10,10 +10,10 @@ MCTS_NUM_SIMULATIONS = 200  # Number of simulations per move
 MCTS_EXPLORATION_CONSTANT = 1.414  # UCB1 exploration constant (sqrt(2))
 MCTS_MAX_DEPTH = 200  # Maximum depth for simulation rollout
 
-# Training Loop Defaults
-TRAIN_NUM_GAMES = 1000  # Number of games to play
-TRAIN_SAVE_INTERVAL = 100  # Save statistics every N games
-TRAIN_VERBOSE = True  # Print progress during training
+# Evaluation Defaults
+EVAL_NUM_GAMES = 1000  # Number of games to play
+EVAL_SAVE_INTERVAL = 100  # Save statistics every N games
+EVAL_VERBOSE = True  # Print progress during evaluation
 
 # Simulation Policy
 # Random rollout: Faster, more exploration, works well with many simulations

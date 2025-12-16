@@ -1,5 +1,5 @@
 """
-MCTS Training and Evaluation Script for Scoundrel.
+MCTS Evaluation Script for Scoundrel.
 """
 import argparse
 from pathlib import Path
@@ -11,9 +11,9 @@ from scoundrel.game.game_manager import GameManager
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
 from scoundrel.rl.mcts.constants import (
     MCTS_NUM_SIMULATIONS,
-    TRAIN_NUM_GAMES,
-    TRAIN_SAVE_INTERVAL,
-    TRAIN_VERBOSE,
+    EVAL_NUM_GAMES,
+    EVAL_SAVE_INTERVAL,
+    EVAL_VERBOSE,
 )
 
 
@@ -132,15 +132,15 @@ def play_mcts_game(
     return state.score
 
 
-def train_mcts(
+def evaluate_mcts(
     num_simulations: int = MCTS_NUM_SIMULATIONS,
-    num_games: int = TRAIN_NUM_GAMES,
-    save_interval: int = TRAIN_SAVE_INTERVAL,
-    verbose: bool = TRAIN_VERBOSE,
+    num_games: int = EVAL_NUM_GAMES,
+    save_interval: int = EVAL_SAVE_INTERVAL,
+    verbose: bool = EVAL_VERBOSE,
     resume_from: str = None,
 ):
     """
-    Train (evaluate) MCTS agent by playing multiple games.
+    Evaluate MCTS agent by playing multiple games and collecting statistics.
     
     Args:
         num_simulations: Number of MCTS simulations per move
@@ -244,13 +244,13 @@ def parse_args():
     parser.add_argument(
         "--num-games",
         type=int,
-        default=TRAIN_NUM_GAMES,
+        default=EVAL_NUM_GAMES,
         help="Number of games to play"
     )
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=TRAIN_SAVE_INTERVAL,
+        default=EVAL_SAVE_INTERVAL,
         help="Save statistics every N games"
     )
     parser.add_argument(
@@ -269,7 +269,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    train_mcts(
+    evaluate_mcts(
         num_simulations=args.num_simulations,
         num_games=args.num_games,
         save_interval=args.save_interval,

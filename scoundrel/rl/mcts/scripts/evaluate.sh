@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# MCTS Training Script for Scoundrel
+# MCTS Evaluation Script for Scoundrel
 # Runs MCTS agent and collects statistics
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +39,7 @@ fi
 
 mkdir -p "$LOGDIR"
 
-echo "=== MCTS Training for Scoundrel ==="
+echo "=== MCTS Evaluation for Scoundrel ==="
 echo "Logs directory: $LOGDIR"
 echo ""
 

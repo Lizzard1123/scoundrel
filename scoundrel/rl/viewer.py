@@ -20,7 +20,8 @@ def _format_action(action: Action) -> str:
 def run_interactive_viewer(
     get_action_fn: Callable[[Any], tuple[Action, Any]],
     label: str,
-    checkpoint_name: str = ""
+    checkpoint_name: str = "",
+    seed: int = None,
 ):
     """
     Generic interactive viewer that can work with any agent type.
@@ -29,8 +30,9 @@ def run_interactive_viewer(
         get_action_fn: Function that takes a game state and returns (action, extra_info)
         label: Label to display in the UI
         checkpoint_name: Optional checkpoint name to display
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     """
-    engine = GameManager()
+    engine = GameManager(seed=seed)
     
     actions_title = f"{label}"
     if checkpoint_name:

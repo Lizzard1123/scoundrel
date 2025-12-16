@@ -11,8 +11,9 @@ from scoundrel.models.card import Card, CardAction, CardColor, CardType
 
 
 class TerminalUI:
-    def __init__(self):
+    def __init__(self, seed: int = None):
         self.console = Console()
+        self.seed = seed
         # Get terminal height
         self.terminal_height = self.console.height
 
@@ -76,9 +77,14 @@ class TerminalUI:
             f"{self.create_weapon_stack(self.game_state.equipped_weapon, self.game_state.weapon_monsters)}"
         )
 
+        # Build title with seed if available
+        title = "[bold]Scoundrel[/bold]"
+        if self.seed is not None:
+            title += f" [dim](seed: {self.seed})[/dim]"
+        
         header = Panel(
             Align.center(header_content, vertical="middle"),
-            title="[bold]Scoundrel[/bold]",
+            title=title,
             box=ROUNDED,
             padding=(0, 1),
             width=self.total_width,

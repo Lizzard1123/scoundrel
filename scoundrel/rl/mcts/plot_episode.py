@@ -19,19 +19,20 @@ def _denormalize_value(normalized_value: float) -> int:
     return int(normalized_value * 218 - 188)
 
 
-def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: bool = False):
+def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: bool = False, seed: int = None):
     """
     Run a full episode using greedy MCTS and track scores at each step.
     
     Args:
         num_simulations: Number of MCTS simulations per move
         verbose: Whether to print step-by-step information
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     
     Returns:
         tuple: (steps, scores) where steps is list of step numbers and scores is list of average scores
     """
     agent = MCTSAgent(num_simulations=num_simulations)
-    engine = GameManager()
+    engine = GameManager(seed=seed)
     
     state = engine.restart()
     
@@ -130,7 +131,7 @@ def plot_episode(steps, scores, final_score, num_simulations):
     plt.show()
 
 
-def run_batch_episodes(num_episodes: int, num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: bool = False):
+def run_batch_episodes(num_episodes: int, num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: bool = False, seed: int = None):
     """
     Run multiple episodes and collect score trajectories.
     
@@ -138,6 +139,7 @@ def run_batch_episodes(num_episodes: int, num_simulations: int = MCTS_NUM_SIMULA
         num_episodes: Number of episodes to run
         num_simulations: Number of MCTS simulations per move
         verbose: Whether to print episode summaries
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     
     Returns:
         list: List of (steps, scores, final_score) tuples for each episode
@@ -146,6 +148,8 @@ def run_batch_episodes(num_episodes: int, num_simulations: int = MCTS_NUM_SIMULA
     
     if verbose:
         print(f"Running {num_episodes} episodes with {num_simulations} simulations per move")
+        if seed is not None:
+            print(f"Using seed: {seed} (deterministic deck shuffling)")
         print("=" * 70)
     
     for episode_num in range(num_episodes):
@@ -154,7 +158,8 @@ def run_batch_episodes(num_episodes: int, num_simulations: int = MCTS_NUM_SIMULA
         
         steps, scores, final_score = run_greedy_episode(
             num_simulations=num_simulations,
-            verbose=False
+            verbose=False,
+            seed=seed
         )
         
         episodes_data.append((steps, scores, final_score))
@@ -284,6 +289,12 @@ def parse_args():
         action="store_true",
         help="Print step-by-step information"
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic deck shuffling (same seed = same game sequence)"
+    )
     return parser.parse_args()
 
 
@@ -300,7 +311,8 @@ def main():
         episodes_data = run_batch_episodes(
             num_episodes=args.batch,
             num_simulations=args.num_simulations,
-            verbose=args.verbose or True  # Always show summary in batch mode
+            verbose=args.verbose or True,  # Always show summary in batch mode
+            seed=args.seed
         )
         
         # Plot the batch results
@@ -309,7 +321,8 @@ def main():
         # Single episode mode
         steps, scores, final_score = run_greedy_episode(
             num_simulations=args.num_simulations,
-            verbose=args.verbose
+            verbose=args.verbose,
+            seed=args.seed
         )
         
         # Plot the results

@@ -1,4 +1,5 @@
 # scoundrel/game/game_manager.py
+import random
 from typing import List, Optional, Tuple
 from scoundrel.models.game_state import Action, GameState
 from scoundrel.models.card import Card, CardAction, CardEffect, CardType
@@ -8,14 +9,27 @@ from scoundrel.ui.terminal_ui import TerminalUI
 
 
 class GameManager:
-    def __init__(self):
+    def __init__(self, seed: Optional[int] = None):
+        """
+        Initialize the game manager.
+        
+        Args:
+            seed: Optional seed for deterministic deck shuffling.
+                  If provided, the same seed will produce the same deck order.
+                  If None, a random seed is generated and used for reproducibility.
+        """
+        # Generate random seed if not provided
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+        
+        self.seed = seed
         self.state = GameState()
         self.command_text = ""
-        self.ui = TerminalUI()
+        self.ui = TerminalUI(seed=seed)
         self.setup_game()
 
     def setup_game(self):
-        self.state.dungeon = Deck.create_deck()
+        self.state.dungeon = Deck.create_deck(self.seed)
         self.draw_room()
         self.command_text = ""
 

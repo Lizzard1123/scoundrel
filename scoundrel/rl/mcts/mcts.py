@@ -140,6 +140,7 @@ def evaluate_mcts(
     verbose: bool = EVAL_VERBOSE,
     resume_from: str = None,
     num_workers: int = MCTS_NUM_WORKERS,
+    seed: int = None,
 ):
     """
     Evaluate MCTS agent by playing multiple games and collecting statistics.
@@ -151,6 +152,7 @@ def evaluate_mcts(
         verbose: Print progress
         resume_from: Path to resume statistics from
         num_workers: Number of parallel workers for MCTS (0 or 1 disables parallelization)
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     """
     base_dir = Path(__file__).parent
     logs_dir, stats_file = _default_paths(base_dir)
@@ -160,11 +162,13 @@ def evaluate_mcts(
     print(f"Number of games: {num_games}")
     print(f"Number of workers: {num_workers}")
     print(f"Parallelization: {'Enabled' if num_workers > 1 else 'Disabled'}")
+    if seed is not None:
+        print(f"Game seed: {seed} (deterministic deck shuffling)")
     print(f"Logs directory: {logs_dir}")
     
     # Initialize agent and engine
     agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
-    engine = GameManager()
+    engine = GameManager(seed=seed)
     
     # Load or create statistics
     if resume_from:
@@ -275,6 +279,12 @@ def parse_args():
         action="store_true",
         help="Disable verbose output"
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic deck shuffling (same seed = same game sequence)"
+    )
     return parser.parse_args()
 
 
@@ -287,6 +297,7 @@ if __name__ == "__main__":
         verbose=not args.quiet,
         resume_from=args.resume_from,
         num_workers=args.num_workers,
+        seed=args.seed,
     )
 
 

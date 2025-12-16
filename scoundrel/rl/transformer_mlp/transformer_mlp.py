@@ -56,9 +56,20 @@ def train_scoundrel(
     tensorboard=True,
     save_interval=TRAIN_SAVE_INTERVAL,
     resume_path=TRAIN_RESUME_FROM,
+    seed=None,
 ):
     """
     Main entrypoint to train the model.
+    
+    Args:
+        engine_instance: Optional GameManager instance (if None, creates new one)
+        max_episodes: Maximum number of training episodes
+        log_dir: Directory for TensorBoard logs
+        checkpoint_path: Path to save checkpoints
+        tensorboard: Whether to enable TensorBoard logging
+        save_interval: Episodes between checkpoints
+        resume_path: Path to checkpoint to resume from
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     """
     base_dir = Path(__file__).parent
     default_logdir, default_checkpoint = _default_paths(base_dir)
@@ -68,11 +79,13 @@ def train_scoundrel(
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     if engine_instance is None:
-        engine = GameManager()
+        engine = GameManager(seed=seed)
     else:
         engine = engine_instance
 
     print(f"--- Starting Scoundrel Training (PPO) ---")
+    if seed is not None:
+        print(f"Using game seed: {seed} (deterministic deck shuffling)")
 
     # Initialize objects
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
@@ -215,6 +228,7 @@ def parse_args():
     parser.add_argument("--save-interval", type=int, default=TRAIN_SAVE_INTERVAL, help="Episodes between checkpoints (0 to save only at end).")
     parser.add_argument("--resume-from", type=str, default=TRAIN_RESUME_FROM, help="Optional checkpoint path to resume training from.")
     parser.add_argument("--no-tensorboard", action="store_true", help="Disable TensorBoard logging.")
+    parser.add_argument("--seed", type=int, default=None, help="Seed for deterministic deck shuffling (same seed = same game sequence)")
     return parser.parse_args()
 
 
@@ -227,6 +241,7 @@ if __name__ == "__main__":
         tensorboard=not args.no_tensorboard,
         save_interval=args.save_interval,
         resume_path=args.resume_from,
+        seed=args.seed,
     )
 
     # Sample run

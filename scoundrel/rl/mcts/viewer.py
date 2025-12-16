@@ -34,7 +34,8 @@ def _denormalize_value(normalized_value: float) -> int:
 
 def run_mcts_viewer(
     num_simulations: int = MCTS_NUM_SIMULATIONS,
-    num_workers: int = MCTS_NUM_WORKERS
+    num_workers: int = MCTS_NUM_WORKERS,
+    seed: int = None,
 ):
     """
     Run interactive viewer with MCTS agent.
@@ -42,9 +43,10 @@ def run_mcts_viewer(
     Args:
         num_simulations: Number of MCTS simulations per move
         num_workers: Number of parallel workers (0 or 1 disables parallelization)
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     """
     agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
-    engine = GameManager()
+    engine = GameManager(seed=seed)
     
     parallel_str = f" | {num_workers} workers" if num_workers > 1 else ""
     actions_title = f"MCTS ({num_simulations} simulations{parallel_str})"
@@ -138,6 +140,12 @@ def parse_args():
         default=MCTS_NUM_WORKERS,
         help="Number of parallel workers (0 or 1 disables parallelization)"
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic deck shuffling (same seed = same game sequence)"
+    )
     return parser.parse_args()
 
 
@@ -146,7 +154,8 @@ def main():
     args = parse_args()
     run_mcts_viewer(
         num_simulations=args.num_simulations,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        seed=args.seed,
     )
 
 

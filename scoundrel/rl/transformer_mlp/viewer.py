@@ -45,8 +45,16 @@ def _greedy_action(agent: PPOAgent, translator: ScoundrelTranslator, state):
     return action_enum, probs.squeeze(0)
 
 
-def run_viewer(checkpoint: Path, label: str):
-    engine = GameManager()
+def run_viewer(checkpoint: Path, label: str, seed: int = None):
+    """
+    Run interactive viewer for trained PPO agent.
+    
+    Args:
+        checkpoint: Path to checkpoint file
+        label: Label to display in UI
+        seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
+    """
+    engine = GameManager(seed=seed)
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
 
     # Determine input dim
@@ -107,6 +115,12 @@ def parse_args():
         default="PPO (latest)",
         help="Label shown in the actions panel title.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic deck shuffling (same seed = same game sequence)"
+    )
     return parser.parse_args()
 
 
@@ -115,4 +129,4 @@ if __name__ == "__main__":
     ckpt_path = Path(args.checkpoint)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    run_viewer(ckpt_path, args.label)
+    run_viewer(ckpt_path, args.label, seed=args.seed)

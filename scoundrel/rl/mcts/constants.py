@@ -6,7 +6,7 @@ NUM_CARDS = 45  # Card embeddings: 0=pad, 1-44=actual cards
 ACTION_SPACE = 5  # 0-3: Pick Card 1-4, 4: Run/Skip Room
 
 # MCTS Parameters
-MCTS_NUM_SIMULATIONS = 10000  # Number of simulations per move
+MCTS_NUM_SIMULATIONS = 30000  # Number of simulations per move
 MCTS_EXPLORATION_CONSTANT = 1.414  # UCB1 exploration constant (sqrt(2))
 MCTS_MAX_DEPTH = 200  # Maximum depth for simulation rollout
 

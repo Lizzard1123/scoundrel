@@ -487,10 +487,18 @@ class MCTSAgent:
         return determinized_state
     
     def _create_engine_from_state(self, game_state: GameState) -> GameManager:
-        """Create a GameManager instance with the given state."""
-        engine = GameManager()
-        engine.state = game_state.copy()
-        return engine
+        """
+        Create a lightweight GameManager instance with the given state.
+        
+        Uses GameManager.from_state() to bypass expensive initialization:
+        - No random seed generation
+        - No TerminalUI creation
+        - No deck creation (state already contains the deck)
+        
+        This provides significant performance improvements when called
+        thousands of times during MCTS simulations.
+        """
+        return GameManager.from_state(game_state.copy())
     
     def _normalize_reward(self, score: int) -> float:
         """

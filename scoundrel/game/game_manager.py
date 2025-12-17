@@ -27,6 +27,28 @@ class GameManager:
         self.command_text = ""
         self.ui = TerminalUI(seed=seed)
         self.setup_game()
+    
+    @classmethod
+    def from_state(cls, game_state: GameState) -> 'GameManager':
+        """
+        Create a GameManager instance from an existing game state.
+        
+        This factory method bypasses normal initialization (seed generation,
+        UI creation, deck setup) for performance-critical use cases like MCTS
+        simulations where these are unnecessary.
+        
+        Args:
+            game_state: The game state to use (will be mutated during play)
+            
+        Returns:
+            GameManager instance with the provided state
+        """
+        instance = cls.__new__(cls)  # Create instance without calling __init__
+        instance.seed = None  # Not used in MCTS
+        instance.state = game_state
+        instance.command_text = ""  # Not used in MCTS, but initialize for safety
+        instance.ui = None  # Not used in MCTS
+        return instance
 
     def setup_game(self):
         self.state.dungeon = Deck.create_deck(self.seed)

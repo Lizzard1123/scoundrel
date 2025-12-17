@@ -3,7 +3,6 @@ MCTS Agent implementation for Scoundrel.
 Implements the four phases: Selection, Expansion, Simulation, Backpropagation.
 Supports root parallelization for improved performance.
 """
-import copy
 import random
 import math
 from typing import List, Optional, Dict
@@ -469,7 +468,7 @@ class MCTSAgent:
         The agent knows their position (they're at indices >= number_avoided * 4).
         The cards at the top (indices < number_avoided * 4) are unknown and should be shuffled.
         """
-        determinized_state = copy.deepcopy(game_state)
+        determinized_state = game_state.copy()
         
         # Shuffle the unknown portion of the dungeon
         if determinized_state.dungeon and determinized_state.number_avoided > 0:
@@ -490,7 +489,7 @@ class MCTSAgent:
     def _create_engine_from_state(self, game_state: GameState) -> GameManager:
         """Create a GameManager instance with the given state."""
         engine = GameManager()
-        engine.state = copy.deepcopy(game_state)
+        engine.state = game_state.copy()
         return engine
     
     def _normalize_reward(self, score: int) -> float:

@@ -63,3 +63,27 @@ class GameState:
     @property
     def game_over(self) -> bool:
         return self.lost or self.exit
+    
+    def copy(self) -> 'GameState':
+        """
+        Create an optimized copy of the GameState.
+        
+        Uses shallow copy for the GameState object and copies only mutable lists.
+        Card objects are immutable (dataclass with value/suit), so they don't need copying.
+        This is significantly faster than copy.deepcopy() for MCTS simulations.
+        
+        Returns:
+            A new GameState instance with copied mutable collections
+        """
+        return GameState(
+            dungeon=self.dungeon.copy(),  # Shallow copy of list (Cards are immutable)
+            room=self.room.copy(),
+            discard=self.discard.copy(),
+            equipped_weapon=self.equipped_weapon,  # Card is immutable, reference is fine
+            weapon_monsters=self.weapon_monsters.copy(),
+            used_potion=self.used_potion,
+            health=self.health,
+            number_avoided=self.number_avoided,
+            last_room_avoided=self.last_room_avoided,
+            exit=self.exit
+        )

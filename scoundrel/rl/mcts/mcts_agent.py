@@ -724,22 +724,35 @@ class MCTSAgent:
         In Scoundrel, when you avoid a room, those 4 cards go to the bottom of the dungeon.
         The agent knows their position (they're at indices >= number_avoided * 4).
         The cards at the top (indices < number_avoided * 4) are unknown and should be shuffled.
+        
+        Optimized to skip determinization when not needed (number_avoided == 0).
         """
+        # Early return: no determinization needed when no rooms have been avoided
+        # This avoids unnecessary state copying and list operations
+        if game_state.number_avoided == 0 or not game_state.dungeon:
+            return game_state.copy()
+        
+        # Copy state only when determinization is actually needed
         determinized_state = game_state.copy()
         
+        # Calculate unknown count (cards that need shuffling)
+        unknown_count = determinized_state.number_avoided * 4
+        
         # Shuffle the unknown portion of the dungeon
-        if determinized_state.dungeon and determinized_state.number_avoided > 0:
-            unknown_count = determinized_state.number_avoided * 4
-            if unknown_count < len(determinized_state.dungeon):
-                # Split dungeon into unknown and known parts
-                unknown_cards = determinized_state.dungeon[:unknown_count]
-                known_cards = determinized_state.dungeon[unknown_count:]
-                
-                # Shuffle only the unknown cards
-                random.shuffle(unknown_cards)
-                
-                # Reconstruct dungeon with shuffled unknown + preserved known
-                determinized_state.dungeon = unknown_cards + known_cards
+        if unknown_count < len(determinized_state.dungeon):
+            # Split dungeon into unknown and known parts
+            unknown_cards = determinized_state.dungeon[:unknown_count]
+            known_cards = determinized_state.dungeon[unknown_count:]
+            
+            # Shuffle only the unknown cards
+            random.shuffle(unknown_cards)
+            
+            # Reconstruct dungeon with shuffled unknown + preserved known
+            determinized_state.dungeon = unknown_cards + known_cards
+        else:
+            # Edge case: all cards are unknown (unknown_count >= len(dungeon))
+            # Shuffle entire dungeon
+            random.shuffle(determinized_state.dungeon)
         
         return determinized_state
     

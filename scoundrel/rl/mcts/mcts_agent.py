@@ -756,33 +756,33 @@ class MCTSAgent:
         The agent knows their position (they're at indices >= number_avoided * 4).
         The cards at the top (indices < number_avoided * 4) are unknown and should be shuffled.
         
-        Optimized to skip determinization when not needed (number_avoided == 0).
+        Optimized to minimize copying:
+        - When no determinization needed: returns full copy (necessary for safety)
+        - When determinization needed: copies state once, shuffles efficiently using minimal operations
         """
         # Early return: no determinization needed when no rooms have been avoided
-        # This avoids unnecessary state copying and list operations
+        # Still need to copy to avoid mutation, but this is the minimal case
         if game_state.number_avoided == 0 or not game_state.dungeon:
             return game_state.copy()
         
-        # Copy state only when determinization is actually needed
+        # Copy state once (necessary since engine will mutate it during simulation)
         determinized_state = game_state.copy()
         
         # Calculate unknown count (cards that need shuffling)
         unknown_count = determinized_state.number_avoided * 4
         
-        # Shuffle the unknown portion of the dungeon
+        # Optimized shuffling: extract unknown portion, shuffle it, then reconstruct
+        # This minimizes intermediate list creation
         if unknown_count < len(determinized_state.dungeon):
-            # Split dungeon into unknown and known parts
+            # Extract and shuffle unknown portion in one step
             unknown_cards = determinized_state.dungeon[:unknown_count]
-            known_cards = determinized_state.dungeon[unknown_count:]
-            
-            # Shuffle only the unknown cards
             random.shuffle(unknown_cards)
             
-            # Reconstruct dungeon with shuffled unknown + preserved known
-            determinized_state.dungeon = unknown_cards + known_cards
+            # Reconstruct dungeon: shuffled unknown + preserved known (single slice operation)
+            determinized_state.dungeon = unknown_cards + determinized_state.dungeon[unknown_count:]
         else:
             # Edge case: all cards are unknown (unknown_count >= len(dungeon))
-            # Shuffle entire dungeon
+            # Shuffle entire dungeon in-place
             random.shuffle(determinized_state.dungeon)
         
         return determinized_state
@@ -796,10 +796,14 @@ class MCTSAgent:
         - No TerminalUI creation
         - No deck creation (state already contains the deck)
         
-        This provides significant performance improvements when called
-        thousands of times during MCTS simulations.
+        IMPORTANT: Does NOT copy the state - the state passed here should already be isolated
+        (e.g., from _determinize_state()). The engine's execute_turn() uses apply_action_to_state()
+        which copies internally, so the original state is never mutated.
+        
+        This eliminates an unnecessary copy operation, providing significant performance improvements
+        when called thousands of times during MCTS simulations.
         """
-        return GameManager.from_state(game_state.copy())
+        return GameManager.from_state(game_state)
     
     def _normalize_reward(self, score: int) -> float:
         """

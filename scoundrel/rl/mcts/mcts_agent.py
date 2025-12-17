@@ -343,9 +343,25 @@ class MCTSAgent:
         return hash(state_tuple)
     
     def _get_valid_actions(self, game_state: GameState) -> List[int]:
-        """Get list of valid action indices for current state."""
-        mask = self.translator.get_action_mask(game_state)
-        return [i for i, valid in enumerate(mask) if valid]
+        """
+        Get list of valid action indices for current state.
+        Uses inline validation to avoid tensor creation overhead.
+        
+        Actions:
+        - 0-3: Pick card from room (valid if index < len(room))
+        - 4: Avoid room (valid if can_avoid is True)
+        """
+        valid_actions = []
+        
+        # Pick actions (0-3): valid if room has a card at that index
+        for i in range(len(game_state.room)):
+            valid_actions.append(i)
+        
+        # Avoid action (4): valid if can_avoid is True
+        if game_state.can_avoid:
+            valid_actions.append(4)
+        
+        return valid_actions
     
     def _apply_action_to_state(self, game_state: GameState, action: Action) -> GameState:
         """

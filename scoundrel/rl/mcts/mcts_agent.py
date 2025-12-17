@@ -10,7 +10,6 @@ from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 
-from scoundrel.game.game_manager import GameManager
 from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
 from scoundrel.models.card import Suit, CardType
@@ -611,9 +610,8 @@ class MCTSAgent:
             self.transposition_table.put(state_hash, reward)
             return reward
         
-        # Run simulation
-        engine = self._create_engine_from_state(game_state)
-        current_state = engine.get_state()
+        # Run simulation using pure function (no engine creation overhead)
+        current_state = game_state
         
         depth = 0
         while depth < self.max_depth:
@@ -633,10 +631,9 @@ class MCTSAgent:
             else:
                 action = self._heuristic_policy(current_state, valid_actions)
             
-            # Apply action
+            # Apply action using pure function (matches pattern used in _select and _expand)
             action_enum = self.translator.decode_action(action)
-            engine.execute_turn(action_enum)
-            current_state = engine.get_state()
+            current_state = self._apply_action_to_state(current_state, action_enum)
             depth += 1
             
             # Early termination: check game_over immediately after action
@@ -786,24 +783,6 @@ class MCTSAgent:
             random.shuffle(determinized_state.dungeon)
         
         return determinized_state
-    
-    def _create_engine_from_state(self, game_state: GameState) -> GameManager:
-        """
-        Create a lightweight GameManager instance with the given state.
-        
-        Uses GameManager.from_state() to bypass expensive initialization:
-        - No random seed generation
-        - No TerminalUI creation
-        - No deck creation (state already contains the deck)
-        
-        IMPORTANT: Does NOT copy the state - the state passed here should already be isolated
-        (e.g., from _determinize_state()). The engine's execute_turn() uses apply_action_to_state()
-        which copies internally, so the original state is never mutated.
-        
-        This eliminates an unnecessary copy operation, providing significant performance improvements
-        when called thousands of times during MCTS simulations.
-        """
-        return GameManager.from_state(game_state)
     
     def _normalize_reward(self, score: int) -> float:
         """

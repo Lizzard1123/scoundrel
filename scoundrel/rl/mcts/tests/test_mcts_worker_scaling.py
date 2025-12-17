@@ -17,7 +17,7 @@ from scoundrel.rl.mcts.constants import (
 from .test_utils import play_games_with_timing
 
 
-@pytest.mark.parametrize("num_workers", [1, 4, 8, 10, 12, 16])
+@pytest.mark.parametrize("num_workers", [1, 4, 6, 8, 10, 12])
 def test_mcts_worker_scaling(game_seed, num_workers):
     """
     Test MCTS performance with different numbers of workers.
@@ -46,8 +46,16 @@ def test_mcts_worker_scaling(game_seed, num_workers):
     assert metrics.num_workers == num_workers
     assert metrics.num_games == MCTS_TEST_NUM_GAMES
     
+    # Get cache statistics
+    cache_stats = agent.get_cache_stats()
+    
     print(f"\n=== Worker Scaling Test ({num_workers} workers) ===")
     print(f"Games played: {metrics.num_games}")
     print(f"Total steps: {metrics.total_steps}")
     print(f"Avg time per step: {metrics.avg_time_per_step:.4f}s")
     print(f"Total time: {metrics.total_time_seconds:.4f}s")
+    print(f"\nCache Statistics:")
+    print(f"  Cache hits: {cache_stats['hits']}")
+    print(f"  Cache misses: {cache_stats['misses']}")
+    print(f"  Cache size: {cache_stats['size']}/{cache_stats['max_size']}")
+    print(f"  Hit rate: {cache_stats['hit_rate']:.2%}")

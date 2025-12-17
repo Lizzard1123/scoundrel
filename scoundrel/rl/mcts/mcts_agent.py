@@ -6,6 +6,7 @@ Supports root parallelization for improved performance.
 import random
 import math
 from typing import List, Optional, Dict
+from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 
@@ -20,11 +21,93 @@ from scoundrel.rl.mcts.constants import (
     MCTS_MAX_DEPTH,
     USE_RANDOM_ROLLOUT,
     MCTS_NUM_WORKERS,
+    MCTS_TRANSPOSITION_TABLE_SIZE,
 )
 
 # Suit to index mapping for efficient hashing
 # HEARTS=0, DIAMONDS=1, CLUBS=2, SPADES=3
 _SUIT_TO_INDEX = {suit: idx for idx, suit in enumerate(Suit)}
+
+
+class TranspositionTable:
+    """
+    LRU cache for MCTS state evaluations.
+    Caches simulation results (normalized rewards) by state hash.
+    
+    Uses OrderedDict for O(1) access and LRU eviction.
+    """
+    
+    def __init__(self, max_size: int = MCTS_TRANSPOSITION_TABLE_SIZE):
+        """
+        Initialize transposition table.
+        
+        Args:
+            max_size: Maximum number of entries (LRU eviction when exceeded)
+        """
+        self.max_size = max_size
+        self.cache: OrderedDict[int, float] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+    
+    def get(self, state_hash: int) -> Optional[float]:
+        """
+        Get cached reward for a state hash.
+        
+        Args:
+            state_hash: Hash of the game state
+            
+        Returns:
+            Cached normalized reward if found, None otherwise
+        """
+        if state_hash in self.cache:
+            # Move to end (most recently used)
+            reward = self.cache.pop(state_hash)
+            self.cache[state_hash] = reward
+            self.hits += 1
+            return reward
+        
+        self.misses += 1
+        return None
+    
+    def put(self, state_hash: int, reward: float):
+        """
+        Store reward for a state hash.
+        
+        Args:
+            state_hash: Hash of the game state
+            reward: Normalized reward from simulation
+        """
+        if state_hash in self.cache:
+            # Update existing entry and move to end
+            self.cache.pop(state_hash)
+        elif len(self.cache) >= self.max_size:
+            # Evict least recently used (first item)
+            self.cache.popitem(last=False)
+        
+        self.cache[state_hash] = reward
+    
+    def clear(self):
+        """Clear all cached entries."""
+        self.cache.clear()
+        self.hits = 0
+        self.misses = 0
+    
+    def stats(self) -> Dict[str, int]:
+        """
+        Get cache statistics.
+        
+        Returns:
+            Dictionary with hits, misses, size, and hit_rate
+        """
+        total = self.hits + self.misses
+        hit_rate = self.hits / total if total > 0 else 0.0
+        return {
+            'hits': self.hits,
+            'misses': self.misses,
+            'size': len(self.cache),
+            'max_size': self.max_size,
+            'hit_rate': hit_rate
+        }
 
 
 def _run_worker_simulations(args: tuple) -> Dict:
@@ -64,10 +147,14 @@ def _run_worker_simulations(args: tuple) -> Dict:
             'value': child.value
         }
     
+    # Get cache statistics from worker
+    cache_stats = agent.get_cache_stats()
+    
     return {
         'action_stats': action_stats,
         'worker_id': worker_id,
-        'root_visits': root.visits
+        'root_visits': root.visits,
+        'cache_stats': cache_stats
     }
 
 
@@ -83,6 +170,7 @@ class MCTSAgent:
         max_depth: int = MCTS_MAX_DEPTH,
         use_random_rollout: bool = USE_RANDOM_ROLLOUT,
         num_workers: int = MCTS_NUM_WORKERS,
+        max_cache_size: int = MCTS_TRANSPOSITION_TABLE_SIZE,
     ):
         """
         Initialize MCTS agent.
@@ -93,6 +181,7 @@ class MCTSAgent:
             max_depth: Maximum depth for simulation rollouts
             use_random_rollout: Whether to use random policy for rollouts
             num_workers: Number of parallel workers (0 or 1 disables parallelization)
+            max_cache_size: Maximum size of transposition table (LRU eviction)
         """
         self.num_simulations = num_simulations
         self.exploration_constant = exploration_constant
@@ -100,6 +189,7 @@ class MCTSAgent:
         self.use_random_rollout = use_random_rollout
         self.num_workers = num_workers
         self.translator = ScoundrelTranslator()
+        self.transposition_table = TranspositionTable(max_size=max_cache_size)
     
     def select_action(self, game_state: GameState) -> int:
         """
@@ -176,6 +266,9 @@ class MCTSAgent:
         Returns:
             Aggregated root node with combined simulation results
         """
+        # Note: We don't reset accumulated stats here - they accumulate across moves
+        # Cache size is now accumulated, not reset per move
+        
         # Ensure we use 'spawn' method for multiprocessing (required on macOS)
         ctx = mp.get_context('spawn')
         
@@ -204,8 +297,53 @@ class MCTSAgent:
                 worker_args
             ))
         
+        # Aggregate cache statistics from all workers
+        self._aggregate_cache_stats(worker_results)
+        
         # Aggregate results from all workers
         return self._aggregate_roots(worker_results, game_state)
+    
+    def _aggregate_cache_stats(self, worker_results: List[Dict]):
+        """
+        Aggregate cache statistics from all worker processes.
+        Accumulates statistics across multiple moves (workers terminate after each move).
+        
+        Args:
+            worker_results: List of dictionaries with results from each worker
+        """
+        total_hits = 0
+        total_misses = 0
+        total_cache_size = 0
+        
+        for worker_result in worker_results:
+            if 'cache_stats' in worker_result:
+                cache_stats = worker_result['cache_stats']
+                total_hits += cache_stats.get('hits', 0)
+                total_misses += cache_stats.get('misses', 0)
+                total_cache_size += cache_stats.get('size', 0)
+        
+        # Accumulate statistics across all moves (don't reset, accumulate)
+        # Note: In parallel mode, workers terminate after each move, so we accumulate
+        # stats across moves to get total statistics for the entire game/session
+        if not hasattr(self, '_accumulated_hits'):
+            self._accumulated_hits = 0
+            self._accumulated_misses = 0
+            self._accumulated_cache_size = 0
+        
+        self._accumulated_hits += total_hits
+        self._accumulated_misses += total_misses
+        # Accumulate cache size across moves (sum of all unique states seen across all moves)
+        # Note: This is an approximation - actual unique states might be less due to overlaps
+        # between workers and moves, but it gives a sense of total cache usage
+        self._accumulated_cache_size += total_cache_size
+        
+        # Update main agent's cache statistics to reflect accumulated values
+        self.transposition_table.hits = self._accumulated_hits
+        self.transposition_table.misses = self._accumulated_misses
+        # Clear the main cache dict (we're tracking aggregate stats, not actual cache contents)
+        self.transposition_table.cache.clear()
+        # Set aggregated_cache_size for get_cache_stats() to use
+        self._aggregated_cache_size = self._accumulated_cache_size
     
     def _aggregate_roots(
         self, 
@@ -289,6 +427,28 @@ class MCTSAgent:
         # Sort by action index for consistent display
         stats.sort(key=lambda x: x['action'])
         return stats
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """
+        Get transposition table cache statistics.
+        
+        For parallel execution, returns aggregated statistics from all workers.
+        For sequential execution, returns statistics from the main agent's cache.
+        
+        Returns:
+            Dictionary with hits, misses, size, max_size, and hit_rate
+        """
+        stats = self.transposition_table.stats()
+        # If we have aggregated cache size from parallel workers, use it
+        if hasattr(self, '_aggregated_cache_size'):
+            stats['size'] = self._aggregated_cache_size
+            # Max size is per-worker, so total max is num_workers * max_size
+            stats['max_size'] = self.num_workers * self.transposition_table.max_size if self.num_workers > 1 else self.transposition_table.max_size
+        return stats
+    
+    def clear_cache(self):
+        """Clear the transposition table cache."""
+        self.transposition_table.clear()
     
     def _create_node(
         self,
@@ -421,7 +581,16 @@ class MCTSAgent:
         """
         Simulation phase: Play out the game using rollout policy.
         Returns normalized reward.
+        
+        Uses transposition table to cache simulation results for identical states.
         """
+        # Check transposition table for cached result
+        state_hash = self._hash_state(game_state)
+        cached_reward = self.transposition_table.get(state_hash)
+        if cached_reward is not None:
+            return cached_reward
+        
+        # Run simulation
         engine = self._create_engine_from_state(game_state)
         current_state = engine.get_state()
         
@@ -445,8 +614,11 @@ class MCTSAgent:
             current_state = engine.get_state()
             depth += 1
         
-        # Return normalized reward
-        return self._normalize_reward(current_state.score)
+        # Calculate and cache normalized reward
+        reward = self._normalize_reward(current_state.score)
+        self.transposition_table.put(state_hash, reward)
+        
+        return reward
     
     def _backpropagate(self, node: MCTSNode, reward: float):
         """

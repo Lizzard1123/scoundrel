@@ -248,7 +248,18 @@ class MCTSAgent:
                 node, simulation_state = self._expand(node, simulation_state)
             
             # 3. Simulation: Play out from this node to get reward
-            reward = self._simulate(simulation_state)
+            # Early termination: if game is already over, calculate reward directly
+            if simulation_state.game_over:
+                # Game is terminal, calculate reward immediately without simulation
+                state_hash = self._hash_state(simulation_state)
+                cached_reward = self.transposition_table.get(state_hash)
+                if cached_reward is not None:
+                    reward = cached_reward
+                else:
+                    reward = self._normalize_reward(simulation_state.score)
+                    self.transposition_table.put(state_hash, reward)
+            else:
+                reward = self._simulate(simulation_state)
             
             # 4. Backpropagation: Update all nodes in path
             self._backpropagate(node, reward)
@@ -560,6 +571,10 @@ class MCTSAgent:
         Expansion phase: Add a new child node for an untried action.
         Returns the new child node and its corresponding game state.
         """
+        # Early termination: don't expand if game is already over
+        if game_state.game_over:
+            return node, game_state
+        
         if len(node.untried_actions) == 0:
             return node, game_state
         
@@ -590,12 +605,22 @@ class MCTSAgent:
         if cached_reward is not None:
             return cached_reward
         
+        # Early termination: if game is already over, return reward immediately
+        if game_state.game_over:
+            reward = self._normalize_reward(game_state.score)
+            self.transposition_table.put(state_hash, reward)
+            return reward
+        
         # Run simulation
         engine = self._create_engine_from_state(game_state)
         current_state = engine.get_state()
         
         depth = 0
-        while not current_state.game_over and depth < self.max_depth:
+        while depth < self.max_depth:
+            # Early termination: check if game is over before continuing
+            if current_state.game_over:
+                break
+            
             # Get valid actions
             valid_actions = self._get_valid_actions(current_state)
             if not valid_actions:
@@ -613,6 +638,12 @@ class MCTSAgent:
             engine.execute_turn(action_enum)
             current_state = engine.get_state()
             depth += 1
+            
+            # Early termination: check game_over immediately after action
+            # (loop condition will also check at start of next iteration, but this avoids
+            # unnecessary work like getting valid actions if game just ended)
+            if current_state.game_over:
+                break
         
         # Calculate and cache normalized reward
         reward = self._normalize_reward(current_state.score)

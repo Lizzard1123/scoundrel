@@ -8,7 +8,7 @@ ACTION_SPACE = 5  # 0-3: Pick Card 1-4, 4: Run/Skip Room
 # MCTS Parameters
 MCTS_NUM_SIMULATIONS = 80000  # Number of simulations per move
 MCTS_EXPLORATION_CONSTANT = 1.414  # UCB1 exploration constant (sqrt(2))
-MCTS_MAX_DEPTH = 200  # Maximum depth for simulation rollout
+MCTS_MAX_DEPTH = 120  # Maximum depth for simulation rollout (games typically end <100 steps, 1.5x safety margin)
 
 # Evaluation Defaults
 EVAL_NUM_GAMES = 100  # Number of games to play

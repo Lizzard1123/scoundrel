@@ -60,6 +60,6 @@ If all optimizations are implemented:
 ## Current Configuration
 
 - Simulations per move: 10,000 (`MCTS_NUM_SIMULATIONS`)
-- Max depth: 200 (`MCTS_MAX_DEPTH`)
+- Max depth: 120 (`MCTS_MAX_DEPTH`)
 - Workers: 8 (`MCTS_NUM_WORKERS`)
 - Random rollout: True (`USE_RANDOM_ROLLOUT`)

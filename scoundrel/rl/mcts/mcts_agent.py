@@ -12,7 +12,7 @@ import multiprocessing as mp
 from scoundrel.game.game_manager import GameManager
 from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
-from scoundrel.models.card import Suit
+from scoundrel.models.card import Suit, CardType
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.mcts.mcts_node import MCTSNode
 from scoundrel.rl.mcts.constants import (
@@ -433,10 +433,11 @@ class MCTSAgent:
                 break
             
             # Select action using rollout policy
+            # Pass valid_actions to avoid recomputation in policy methods
             if self.use_random_rollout:
-                action = self._random_policy(current_state)
+                action = self._random_policy(current_state, valid_actions)
             else:
-                action = self._heuristic_policy(current_state)
+                action = self._heuristic_policy(current_state, valid_actions)
             
             # Apply action
             action_enum = self.translator.decode_action(action)
@@ -456,21 +457,29 @@ class MCTSAgent:
             current_node.update(reward)
             current_node = current_node.parent
     
-    def _random_policy(self, game_state: GameState) -> int:
-        """Random action selection for rollout."""
-        valid_actions = self._get_valid_actions(game_state)
+    def _random_policy(self, game_state: GameState, valid_actions: List[int]) -> int:
+        """
+        Random action selection for rollout.
+        
+        Args:
+            game_state: Current game state (unused, kept for API consistency)
+            valid_actions: Pre-computed list of valid action indices
+        """
         return random.choice(valid_actions)
     
-    def _heuristic_policy(self, game_state: GameState) -> int:
-        """Heuristic action selection for rollout based on Scoundrel mechanics."""
-        from scoundrel.models.card import CardType
-        from scoundrel.game.combat import Combat
+    def _heuristic_policy(self, game_state: GameState, valid_actions: List[int]) -> int:
+        """
+        Heuristic action selection for rollout based on Scoundrel mechanics.
+        Optimized to avoid redundant computations and inline simple logic.
         
-        valid_actions = self._get_valid_actions(game_state)
+        Args:
+            game_state: Current game state
+            valid_actions: Pre-computed list of valid action indices
+        """
         if not valid_actions:
             return 0
         
-        # If we can avoid and health is low, consider avoiding
+        # Early exit: If we can avoid and health is low, prefer avoiding
         if game_state.can_avoid and game_state.health < 8:
             return 4  # Avoid
         
@@ -478,42 +487,56 @@ class MCTSAgent:
         best_action = None
         best_score = float('-inf')
         
+        # Pre-compute common values to avoid repeated property access
+        health = game_state.health
+        equipped_weapon = game_state.equipped_weapon
+        can_use_potion = game_state.can_use_potion
+        weapon_monsters = game_state.weapon_monsters
+        
         for action_idx in valid_actions:
             if action_idx == 4:  # Avoid action
                 score = -5  # Slightly discourage avoiding unless necessary
             else:
                 card = game_state.room[action_idx]
-                score = 0
+                card_type = card.type
                 
-                if card.type == CardType.POTION:
+                if card_type == CardType.POTION:
                     # Value potions based on how much health we need
-                    health_needed = 20 - game_state.health
-                    if health_needed > 0 and game_state.can_use_potion:
+                    health_needed = 20 - health
+                    if health_needed > 0 and can_use_potion:
                         score = min(card.value, health_needed) * 2  # High value
                     else:
                         score = -10  # Don't take if we can't use it
                 
-                elif card.type == CardType.WEAPON:
+                elif card_type == CardType.WEAPON:
                     # Value weapons based on their strength
-                    if game_state.equipped_weapon:
+                    if equipped_weapon:
                         # Upgrade if new weapon is better
-                        score = (card.value - game_state.equipped_weapon.value) * 2
+                        score = (card.value - equipped_weapon.value) * 2
                     else:
                         score = card.value * 3  # High value for first weapon
                 
-                elif card.type == CardType.MONSTER:
-                    # Calculate damage we'd take
-                    if Combat.can_use_weapon(game_state, card):
-                        damage = Combat.calculate_damage(card, game_state.equipped_weapon)
+                elif card_type == CardType.MONSTER:
+                    # Inline combat calculations to avoid function call overhead
+                    # Equivalent to: Combat.can_use_weapon(game_state, card)
+                    can_use_weapon = (
+                        equipped_weapon is not None and
+                        (not weapon_monsters or card.value <= weapon_monsters[-1].value)
+                    )
+                    
+                    # Calculate damage (equivalent to Combat.calculate_damage)
+                    if can_use_weapon:
+                        # damage = max(0, monster.value - weapon.value)
+                        damage = max(0, card.value - equipped_weapon.value)
                     else:
                         damage = card.value
                     
-                    # Negative score based on damage
-                    score = -damage * 2
-                    
-                    # Avoid if it would kill us
-                    if damage >= game_state.health:
+                    # Early exit: Avoid if it would kill us
+                    if damage >= health:
                         score = -1000
+                    else:
+                        # Negative score based on damage
+                        score = -damage * 2
             
             if score > best_score:
                 best_score = score

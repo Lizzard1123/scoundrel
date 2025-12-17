@@ -12,6 +12,7 @@ import multiprocessing as mp
 from scoundrel.game.game_manager import GameManager
 from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
+from scoundrel.models.card import Suit
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.mcts.mcts_node import MCTSNode
 from scoundrel.rl.mcts.constants import (
@@ -20,6 +21,10 @@ from scoundrel.rl.mcts.constants import (
     USE_RANDOM_ROLLOUT,
     MCTS_NUM_WORKERS,
 )
+
+# Suit to index mapping for efficient hashing
+# HEARTS=0, DIAMONDS=1, CLUBS=2, SPADES=3
+_SUIT_TO_INDEX = {suit: idx for idx, suit in enumerate(Suit)}
 
 
 def _run_worker_simulations(args: tuple) -> Dict:
@@ -234,9 +239,11 @@ class MCTSAgent:
         
         # Create child nodes for each action with aggregated stats
         for action, stats in action_stats.items():
-            # Create a dummy state for the child (not used for action selection)
+            # Create a dummy state hash for the child (not used for action selection)
+            # Use a deterministic integer hash based on action
+            child_hash = hash(("aggregated_child", action))
             child = MCTSNode(
-                state_hash=f"aggregated_child_{action}",
+                state_hash=child_hash,
                 parent=root,
                 action=action,
                 visits=stats['visits'],
@@ -301,13 +308,39 @@ class MCTSAgent:
             is_game_over=game_state.game_over
         )
     
-    def _hash_state(self, game_state: GameState) -> str:
-        """Create a hash representing the game state."""
-        # Simple hash based on key state features
-        room_str = ",".join([f"{c.suit.value}{c.value}" for c in game_state.room])
-        dungeon_str = ",".join([f"{c.suit.value}{c.value}" for c in game_state.dungeon[:5]])  # First 5 cards
-        weapon_str = f"{game_state.equipped_weapon.value}" if game_state.equipped_weapon else "None"
-        return f"h{game_state.health}_w{weapon_str}_r{room_str}_d{dungeon_str}"
+    def _hash_state(self, game_state: GameState) -> int:
+        """
+        Create an integer hash representing the game state.
+        
+        Uses efficient integer-based hashing instead of string concatenation.
+        Converts cards to integers: suit_index * 100 + card_value
+        Then uses Python's built-in hash() on a tuple of state features.
+        
+        Args:
+            game_state: Game state to hash
+            
+        Returns:
+            Integer hash of the game state
+        """
+        # Helper function to convert card to integer
+        # Uses suit_index * 100 + card_value to ensure unique integer per card
+        def card_to_int(card):
+            suit_index = _SUIT_TO_INDEX[card.suit]
+            return suit_index * 100 + card.value
+        
+        # Convert room cards to integers
+        room_tuple = tuple(card_to_int(c) for c in game_state.room)
+        
+        # Convert first 5 dungeon cards to integers
+        dungeon_cards = game_state.dungeon[:5]
+        dungeon_tuple = tuple(card_to_int(c) for c in dungeon_cards)
+        
+        # Weapon value: card.value if equipped, else 0
+        weapon_value = game_state.equipped_weapon.value if game_state.equipped_weapon else 0
+        
+        # Create tuple of key state features and hash it
+        state_tuple = (game_state.health, weapon_value, room_tuple, dungeon_tuple)
+        return hash(state_tuple)
     
     def _get_valid_actions(self, game_state: GameState) -> List[int]:
         """Get list of valid action indices for current state."""

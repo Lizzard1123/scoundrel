@@ -22,7 +22,7 @@ class MCTSNode:
         untried_actions: Actions that haven't been explored yet
         is_game_over: Whether this node represents a terminal game state
     """
-    state_hash: str
+    state_hash: int
     parent: Optional['MCTSNode'] = None
     action: Optional[int] = None
     children: List['MCTSNode'] = field(default_factory=list)

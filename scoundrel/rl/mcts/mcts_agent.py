@@ -19,7 +19,6 @@ from scoundrel.rl.mcts.constants import (
     MCTS_MAX_DEPTH,
     USE_RANDOM_ROLLOUT,
     MCTS_NUM_WORKERS,
-    MCTS_PARALLEL_THRESHOLD,
 )
 
 
@@ -100,7 +99,7 @@ class MCTSAgent:
     def select_action(self, game_state: GameState) -> int:
         """
         Select the best action using MCTS.
-        Uses parallel execution if num_workers > 1 and num_simulations is high enough.
+        Uses parallel execution if num_workers > 1.
         
         Args:
             game_state: Current game state
@@ -109,10 +108,7 @@ class MCTSAgent:
             Action index (0-4)
         """
         # Determine if parallelization should be used
-        use_parallel = (
-            self.num_workers > 1 and 
-            self.num_simulations >= MCTS_PARALLEL_THRESHOLD
-        )
+        use_parallel = self.num_workers > 1
         
         if use_parallel:
             root = self._parallel_search(game_state)
@@ -133,7 +129,7 @@ class MCTSAgent:
     
     def _sequential_search(self, game_state: GameState) -> MCTSNode:
         """
-        Run MCTS simulations sequentially (original implementation).
+        Run MCTS simulations sequentially.
         
         Args:
             game_state: Current game state

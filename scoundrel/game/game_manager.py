@@ -5,6 +5,7 @@ from scoundrel.models.game_state import Action, GameState
 from scoundrel.models.card import Card, CardAction, CardEffect, CardType
 from scoundrel.game.deck import Deck
 from scoundrel.game.combat import Combat
+from scoundrel.game.game_logic import apply_action_to_state, handle_card_in_state, draw_room_in_state
 from scoundrel.ui.terminal_ui import TerminalUI
 
 
@@ -62,17 +63,11 @@ class GameManager:
 
     # Fresh room state
     def draw_room(self):
-        if len(self.state.room) == 1:
-            # Reset after full room completed
-            self.state.last_room_avoided = False
-            self.state.used_potion = False
-        # Only draw if there's 1 or 0 cards in the room
-        cards_needed = 4 - len(self.state.room)
-        for _ in range(cards_needed):
-            if self.state.dungeon:
-                self.state.room.append(self.state.dungeon.pop(0))
+        """Draw cards from dungeon to fill room to 4 cards."""
+        draw_room_in_state(self.state)
 
     def avoid_room(self):
+        """Move room cards to bottom of dungeon and mark as avoided."""
         self.state.dungeon.extend(self.state.room)
         self.state.room = []
         self.state.number_avoided += 1
@@ -116,67 +111,54 @@ class GameManager:
                 return Action.INVALID
 
     def handle_card(self, card: Card):
-        if card.type == CardType.WEAPON:
-            if self.state.equipped_weapon:
-                self.state.discard.extend(
-                    [self.state.equipped_weapon] + self.state.weapon_monsters
-                )
-                self.state.weapon_monsters = []
-            self.state.equipped_weapon = card
-
-        elif card.type == CardType.POTION:
-            if not self.state.used_potion: # First potion this turn
-                self.state.used_potion = True
-                self.state.health = min(20, self.state.health + card.value)
-            self.state.discard.append(card)
-
-        elif card.type == CardType.MONSTER:
-            if Combat.can_use_weapon(self.state, card):
-                damage = Combat.calculate_damage(card, self.state.equipped_weapon)
-                self.state.weapon_monsters.append(card)
-            else:
-                damage = card.value
-                self.state.discard.append(card)
-            self.state.health -= damage
-
+        """Handle a card being picked from the room. Returns log message."""
+        handle_card_in_state(self.state, card)
         return CardEffect[card.type] + str(card)
 
     def get_state(self):
         return self.state
 
     def execute_turn(self, action: Action):
-        # Execute current action
+        """
+        Execute a turn with the given action.
+        Uses pure game logic function internally, then handles UI-specific concerns.
+        """
+        # Handle UI-specific cases first
         match action:
             case Action.RESTART:
                 self.command_text = "Restarted"
                 self.restart()
+                return
             case Action.EXIT:
                 self.command_text = "Exited"
                 self.state.exit = True
+                return
             case Action.AVOID:
-                if(self.state.game_over):
+                if self.state.game_over:
                     return
                 if self.state.can_avoid:
                     self.command_text = "Avoided"
-                    self.avoid_room()
                 else:
                     self.command_text = "Cannot avoid this room... Good Luck"
+                    return  # Don't apply action if can't avoid
             case Action.USE_1 | Action.USE_2 | Action.USE_3 | Action.USE_4:
-                if(self.state.game_over):
+                if self.state.game_over:
                     return
-                if(action.value >= len(self.state.room)):
+                if action.value >= len(self.state.room):
                     self.command_text = f"Pick within 1-{len(self.state.room)}"
-                else:
-                    card = self.state.room[action.value]
-                    self.state.room.pop(action.value)
-                    log = self.handle_card(card)
-                    self.command_text = log
+                    return
+                # Get card for log message before applying action
+                card = self.state.room[action.value]
+                log = CardEffect[card.type] + str(card)
+                self.command_text = log
             case _:
                 self.command_text = "Command not registered!"
-        # Prepare for next turn
-        if len(self.state.room) <= 1:
-            self.draw_room()
-        return
+                return
+        
+        # Apply action using pure function (returns new state)
+        # Assign the new state back to self.state
+        new_state = apply_action_to_state(self.state, action)
+        self.state = new_state
 
     def ui_loop(self):
         while not self.state.exit:

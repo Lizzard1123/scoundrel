@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 
 from scoundrel.game.game_manager import GameManager
+from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.mcts.mcts_node import MCTSNode
@@ -313,6 +314,22 @@ class MCTSAgent:
         mask = self.translator.get_action_mask(game_state)
         return [i for i, valid in enumerate(mask) if valid]
     
+    def _apply_action_to_state(self, game_state: GameState, action: Action) -> GameState:
+        """
+        Apply an action to a game state and return a new state.
+        
+        This eliminates the need for engine creation during selection and expansion.
+        Uses the shared pure function from game_logic module.
+        
+        Args:
+            game_state: Current game state (will be copied, not mutated)
+            action: Action to apply
+            
+        Returns:
+            New GameState with the action applied
+        """
+        return apply_action_to_state(game_state, action)
+    
     def _select(self, node: MCTSNode, game_state: GameState) -> tuple[MCTSNode, GameState]:
         """
         Selection phase: Traverse tree using UCB1 until we find a node to expand.
@@ -323,11 +340,9 @@ class MCTSAgent:
         
         while current_node.is_fully_expanded() and current_node.children and not current_state.game_over:
             current_node = current_node.best_child(self.exploration_constant)
-            # Apply action to state
+            # Apply action to state using pure function (no engine creation)
             action_enum = self.translator.decode_action(current_node.action)
-            engine = self._create_engine_from_state(current_state)
-            engine.execute_turn(action_enum)
-            current_state = engine.get_state()
+            current_state = self._apply_action_to_state(current_state, action_enum)
         
         return current_node, current_state
     
@@ -343,11 +358,9 @@ class MCTSAgent:
         action = random.choice(node.untried_actions)
         node.untried_actions.remove(action)
         
-        # Apply action to get new state
-        engine = self._create_engine_from_state(game_state)
+        # Apply action to get new state using pure function (no engine creation)
         action_enum = self.translator.decode_action(action)
-        engine.execute_turn(action_enum)
-        new_state = engine.get_state()
+        new_state = self._apply_action_to_state(game_state, action_enum)
         
         # Create new child node
         child_node = self._create_node(new_state, parent=node, action=action)

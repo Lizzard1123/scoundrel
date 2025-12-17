@@ -6,14 +6,12 @@ NUM_CARDS = 45  # Card embeddings: 0=pad, 1-44=actual cards
 ACTION_SPACE = 5  # 0-3: Pick Card 1-4, 4: Run/Skip Room
 
 # MCTS Parameters
-MCTS_NUM_SIMULATIONS = 80000  # Number of simulations per move
+MCTS_NUM_SIMULATIONS = 500000  # Number of simulations per move
 MCTS_EXPLORATION_CONSTANT = 1.414  # UCB1 exploration constant (sqrt(2))
 MCTS_MAX_DEPTH = 120  # Maximum depth for simulation rollout (games typically end <100 steps, 1.5x safety margin)
 
 # Evaluation Defaults
-EVAL_NUM_GAMES = 100  # Number of games to play
-EVAL_SAVE_INTERVAL = 100  # Save statistics every N games
-EVAL_VERBOSE = True  # Print progress during evaluation
+EVAL_NUM_GAMES = 10  # Number of games to play
 
 # Simulation Policy
 USE_RANDOM_ROLLOUT = True  # Use random policy for rollouts (vs heuristic)

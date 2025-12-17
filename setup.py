@@ -12,6 +12,7 @@ setup(
             'play=main:main',
             'mcts=scoundrel.rl.mcts.viewer:main',
             'mcts-plot=scoundrel.rl.mcts.plot_episode:main',
+            'mcts-eval=scoundrel.rl.mcts.eval:main',
         ],
     },
 )

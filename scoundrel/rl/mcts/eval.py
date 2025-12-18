@@ -12,13 +12,13 @@ from scoundrel.rl.mcts.constants import (
     MCTS_EXPLORATION_CONSTANT,
     MCTS_MAX_DEPTH,
     MCTS_NUM_WORKERS,
-    MCTS_TEST_SEED,
+    EVAL_SEED,
     EVAL_NUM_GAMES,
     USE_RANDOM_ROLLOUT,
 )
 
 
-def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = MCTS_TEST_SEED, verbose: bool = False):
+def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = EVAL_SEED, verbose: bool = False):
     """
     Run MCTS evaluation and return results.
     
@@ -44,11 +44,12 @@ def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = MCTS_TEST_SEED, 
     wins = 0
     
     for game_num in range(num_games):
-        if verbose:
-            print(f"Playing game {game_num + 1}/{num_games}...")
-        
         # Create new game with deterministic seed
         engine_seed = seed + game_num
+        
+        if verbose:
+            print(f"Playing game {game_num + 1}/{num_games} (seed={engine_seed})...")
+        
         engine = GameManager(seed=engine_seed)
         state = engine.restart()
         
@@ -127,8 +128,8 @@ def main():
     parser.add_argument(
         "--seed",
         type=int,
-        default=MCTS_TEST_SEED,
-        help=f"Base seed for GameManager (default: {MCTS_TEST_SEED})"
+        default=EVAL_SEED,
+        help=f"Base seed for GameManager (default: {EVAL_SEED})"
     )
     
     args = parser.parse_args()

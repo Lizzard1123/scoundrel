@@ -14,10 +14,8 @@ class TerminalUI:
     def __init__(self, seed: int = None):
         self.console = Console()
         self.seed = seed
-        # Get terminal height
         self.terminal_height = self.console.height
 
-        # Calculate required height for our layout
         self.header_height = 4
         self.room_height = 5
         self.actions_height = 3
@@ -77,7 +75,6 @@ class TerminalUI:
             f"{self.create_weapon_stack(self.game_state.equipped_weapon, self.game_state.weapon_monsters)}"
         )
 
-        # Build title with seed if available
         title = "[bold]Scoundrel[/bold]"
         if self.seed is not None:
             title += f" [dim](seed: {self.seed})[/dim]"
@@ -164,21 +161,16 @@ class TerminalUI:
         self.console.clear()
         self.game_state = game_state
 
-        # Print newlines to push content to bottom
-        padding_lines = self.terminal_height - self.total_height - 1  # -1 for input prompt
+        padding_lines = self.terminal_height - self.total_height - 1
         if padding_lines > 0:
             self.console.print("\n" * padding_lines, end="")
 
-        # Create and print header
         self.print_game_header_panel()
 
-        # Check if game over
         if(game_state.game_over):
             self.print_game_over_panel()
             return
 
-        # Create and print room display
         self.print_game_cards_panel()
 
-        # Create and print actions
         self.print_game_actions_panel(override_text=actions_override, title=actions_title)

@@ -5,7 +5,6 @@ Contains common functions used across different RL implementations.
 from scoundrel.models.game_state import Action
 
 
-# Score normalization constants
 SCORE_MIN = -188  # Die at 0 HP with max monsters remaining
 SCORE_MAX = 30    # 20 HP + max potion = 10
 SCORE_RANGE = SCORE_MAX - SCORE_MIN  # 218

@@ -1,4 +1,3 @@
-# scoundrel/game/game_manager.py
 import random
 from typing import List, Optional
 from scoundrel.models.game_state import Action, GameState
@@ -19,7 +18,6 @@ class GameManager:
                   If provided, the same seed will produce the same deck order.
                   If None, a random seed is generated and used for reproducibility.
         """
-        # Generate random seed if not provided
         if seed is None:
             seed = random.randint(0, 2**31 - 1)
         
@@ -39,7 +37,6 @@ class GameManager:
         self.setup_game()
         return self.state
 
-    # Fresh room state
     def draw_room(self):
         """Draw cards from dungeon to fill room to 4 cards."""
         draw_room_in_state(self.state)
@@ -47,14 +44,12 @@ class GameManager:
     def parse_command(self, command: str) -> Action:
         """Parse command string into action and card index"""
         parts = command.lower().strip().split()
-        # Add padding
         if(len(parts) == 0):
             parts = (None, None)
         if(len(parts) == 1):
             parts = (parts[0], None)
         if(len(parts) > 2):
             parts = (parts[0], parts[1])
-        # Match to action
         match parts:
             case ("avoid" | "0", _):
                 return Action.AVOID
@@ -89,7 +84,6 @@ class GameManager:
         Execute a turn with the given action.
         Uses pure game logic function internally, then handles UI-specific concerns.
         """
-        # Handle UI-specific cases first
         match action:
             case Action.RESTART:
                 self.command_text = "Restarted"
@@ -113,7 +107,6 @@ class GameManager:
                 if action.value >= len(self.state.room):
                     self.command_text = f"Pick within 1-{len(self.state.room)}"
                     return
-                # Get card for log message before applying action
                 card = self.state.room[action.value]
                 log = CardEffect[card.type] + str(card)
                 self.command_text = log
@@ -121,16 +114,12 @@ class GameManager:
                 self.command_text = "Command not registered!"
                 return
         
-        # Apply action using pure function (returns new state)
-        # Assign the new state back to self.state
         new_state = apply_action_to_state(self.state, action)
         self.state = new_state
 
     def ui_loop(self):
         while not self.state.exit:
-            # Display UI
             self.ui.display_game_state(self.state)
-            # Display log and cmd input
             if self.state.game_over:
                 self.command_text = "Press \'R\' to restart or \'E\' to exit"
             self.command_text += "\nEnter command: "
@@ -140,11 +129,9 @@ class GameManager:
             except:
                 self.execute_turn(Action.EXIT)
                 continue
-            # Parse input and execute
             action = self.parse_command(command)
             if action == Action.INVALID:
                 self.command_text = "Invalid command! Use 'avoid' or '[fight/take/heal] [1-4]' or just the number"
                 continue
             self.execute_turn(action)
-        # Final game screen refresh
         self.ui.display_game_state(self.state)

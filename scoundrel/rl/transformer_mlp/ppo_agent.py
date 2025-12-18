@@ -23,7 +23,6 @@ class PPOAgent:
         with torch.no_grad():
             logits, val = self.policy_old(scalar_in, seq_in)
 
-            # Apply Masking: Set invalid actions to -inf
             masked_logits = logits.clone()
             masked_logits[~mask.unsqueeze(0)] = float('-inf')
 
@@ -34,7 +33,6 @@ class PPOAgent:
             return int(action.item()), dist.log_prob(action), val
 
     def update(self, memory):
-        # Convert memory lists to tensors
         rewards = []
         discounted_reward = 0
         for reward, is_terminal in zip(reversed(memory.rewards), reversed(memory.is_terminals)):
@@ -44,24 +42,19 @@ class PPOAgent:
             rewards.insert(0, discounted_reward)
 
         rewards = torch.tensor(rewards, dtype=torch.float32)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7) # Normalize
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
 
-        # Stack tensors
         old_states_scal = torch.cat(memory.states_scal)
         old_states_seq = torch.cat(memory.states_seq)
         old_actions = torch.tensor(memory.actions)
         old_logprobs = torch.tensor(memory.logprobs)
         old_masks = torch.stack(memory.masks)
 
-        # PPO Update Loop
         last_metrics = {}
         for _ in range(K_EPOCHS):
             logits, state_values = self.policy(old_states_scal, old_states_seq)
 
-            # Re-apply masking for update
             masked_logits = logits.clone()
-            # We must iterate or broadcast the mask carefully
-            # Ideally, masking happens inside the model or loss, but here we just mask logits before softmax
             masked_logits[~old_masks] = float('-inf')
 
             dist = Categorical(F.softmax(masked_logits, dim=-1))
@@ -69,10 +62,8 @@ class PPOAgent:
             dist_entropy = dist.entropy()
             state_values = torch.squeeze(state_values)
 
-            # Ratios
             ratios = torch.exp(logprobs - old_logprobs.detach())
 
-            # Surrogate Loss
             advantages = rewards - state_values.detach()
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-EPS_CLIP, 1+EPS_CLIP) * advantages
@@ -87,7 +78,6 @@ class PPOAgent:
             loss.backward()
             self.optimizer.step()
 
-            # Keep the latest metrics for optional logging
             approx_kl = (old_logprobs.detach() - logprobs).mean()
             last_metrics = {
                 "loss": loss.detach().item(),

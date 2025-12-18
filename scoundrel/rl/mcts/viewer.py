@@ -39,39 +39,31 @@ def run_mcts_viewer(
     state = engine.restart()
     
     while not state.exit:
-        # Get next action from MCTS
         action_idx = agent.select_action(state)
         action_enum = agent.translator.decode_action(action_idx)
         action_text = format_action(action_enum)
         
-        # Get action statistics
         stats = agent.get_action_stats()
         
-        # Format compact action display: Next: [use 2] | Scores: 1:0.65/450 2:0.72/892 3:0.60/380 4:0.59/278
         ui_text = f"Next: [bold green]{action_text}[/bold green]"
         
-        # Add compact scores with raw values
         if stats:
             score_parts = []
             for s in stats:
-                # Use compact format: action_num:raw_score/visits
                 if s['action'] == 4:
-                    label = "A"  # Avoid
+                    label = "A"
                 else:
                     label = str(s['action'] + 1)
                 
                 visits = s['visits']
                 raw_score = denormalize_score(s['avg_value'])
                 
-                # Format: positive scores in green, negative in red/dim
                 if s['action'] == action_idx:
-                    # Selected action
                     if raw_score > 0:
                         score_parts.append(f"[bold green][{label}:{raw_score:+d}/{visits}][/bold green]")
                     else:
                         score_parts.append(f"[bold yellow][{label}:{raw_score:+d}/{visits}][/bold yellow]")
                 else:
-                    # Unselected action
                     if raw_score > 0:
                         score_parts.append(f"[green]{label}:{raw_score:+d}/{visits}[/green]")
                     else:
@@ -98,13 +90,11 @@ def run_mcts_viewer(
             state = engine.restart()
             continue
         if state.game_over:
-            # Ignore other inputs while game over
             continue
         if user in ("", " ", "s", "step"):
             engine.execute_turn(action_enum)
             state = engine.get_state()
             continue
-        # Unrecognized input: loop and resample
         state = engine.get_state()
 
 

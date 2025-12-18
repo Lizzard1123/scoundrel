@@ -24,17 +24,13 @@ def apply_action_to_state(game_state: GameState, action: Action) -> GameState:
     Returns:
         New GameState with the action applied
     """
-    # Copy state to avoid mutation
     new_state = game_state.copy()
     
-    # Handle game over - no actions can be taken
     if new_state.game_over:
         return new_state
     
-    # Apply action
     match action:
         case Action.RESTART:
-            # Reset to initial state (empty state - caller should initialize deck)
             new_state = GameState()
             return new_state
             
@@ -44,34 +40,26 @@ def apply_action_to_state(game_state: GameState, action: Action) -> GameState:
             
         case Action.AVOID:
             if new_state.can_avoid:
-                # Move room cards to bottom of dungeon
                 new_state.dungeon.extend(new_state.room)
                 new_state.room = []
                 new_state.number_avoided += 1
                 new_state.last_room_avoided = True
-                # Draw new room
                 draw_room_in_state(new_state)
             return new_state
             
         case Action.USE_1 | Action.USE_2 | Action.USE_3 | Action.USE_4:
-            # Validate action index
             if action.value >= len(new_state.room):
-                return new_state  # Invalid action, return unchanged
+                return new_state
             
-            # Remove card from room
             card = new_state.room.pop(action.value)
-            
-            # Handle card based on type
             handle_card_in_state(new_state, card)
             
-            # Draw new room if needed (after card is removed)
             if len(new_state.room) <= 1:
                 draw_room_in_state(new_state)
             
             return new_state
             
         case _:
-            # Unknown action, return unchanged
             return new_state
 
 
@@ -85,7 +73,6 @@ def handle_card_in_state(game_state: GameState, card: Card) -> None:
         card: Card that was picked
     """
     if card.type == CardType.WEAPON:
-        # Equip weapon, discard old weapon and weapon_monsters
         if game_state.equipped_weapon:
             game_state.discard.extend(
                 [game_state.equipped_weapon] + game_state.weapon_monsters
@@ -94,14 +81,12 @@ def handle_card_in_state(game_state: GameState, card: Card) -> None:
         game_state.equipped_weapon = card
         
     elif card.type == CardType.POTION:
-        # Use potion if not already used this turn
         if not game_state.used_potion:
             game_state.used_potion = True
             game_state.health = min(20, game_state.health + card.value)
         game_state.discard.append(card)
         
     elif card.type == CardType.MONSTER:
-        # Calculate damage
         if Combat.can_use_weapon(game_state, card):
             damage = Combat.calculate_damage(card, game_state.equipped_weapon)
             game_state.weapon_monsters.append(card)
@@ -120,10 +105,8 @@ def draw_room_in_state(game_state: GameState) -> None:
         game_state: Game state to mutate
     """
     if len(game_state.room) == 1:
-        # Reset after full room completed
         game_state.last_room_avoided = False
         game_state.used_potion = False
-    # Only draw if there's 1 or 0 cards in the room
     cards_needed = 4 - len(game_state.room)
     for _ in range(cards_needed):
         if game_state.dungeon:

@@ -33,7 +33,6 @@ def run_interactive_viewer(
     state = engine.restart()
     
     while not state.exit:
-        # Get next action from the agent
         action_enum, extra_info = get_action_fn(state)
         action_text = format_action(action_enum)
         ui_text = f"Next action: [bold]{action_text}[/bold]"
@@ -57,13 +56,11 @@ def run_interactive_viewer(
             state = engine.restart()
             continue
         if state.game_over:
-            # Ignore other inputs while game over
             continue
         if user in ("", " ", "s", "step"):
             engine.execute_turn(action_enum)
             state = engine.get_state()
             continue
-        # Unrecognized input: loop and resample
         state = engine.get_state()
 
 

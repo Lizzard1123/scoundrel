@@ -30,7 +30,6 @@ def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = EVAL_SEED, verbo
     Returns:
         Dictionary with evaluation results
     """
-    # Create agent with current parameters from constants
     agent = MCTSAgent(
         num_simulations=MCTS_NUM_SIMULATIONS,
         exploration_constant=MCTS_EXPLORATION_CONSTANT,
@@ -39,12 +38,10 @@ def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = EVAL_SEED, verbo
         use_random_rollout=USE_RANDOM_ROLLOUT,
     )
     
-    # Play games and collect results
     scores = []
     wins = 0
     
     for game_num in range(num_games):
-        # Create new game with deterministic seed
         engine_seed = seed + game_num
         
         if verbose:
@@ -54,25 +51,21 @@ def run_evaluation(num_games: int = EVAL_NUM_GAMES, seed: int = EVAL_SEED, verbo
         state = engine.restart()
         
         while not state.game_over:
-            # Get action from MCTS
             action_idx = agent.select_action(state)
             action_enum = agent.translator.decode_action(action_idx)
             
-            # Execute action
             engine.execute_turn(action_enum)
             state = engine.get_state()
         
         score = state.score
         scores.append(score)
         
-        # Win is defined as score > 0 (health > 0 at end)
         if score > 0:
             wins += 1
         
         if verbose:
             print(f"  Game {game_num + 1} finished: Score={score}, {'Win' if score > 0 else 'Loss'}")
     
-    # Calculate metrics
     total_score = sum(scores)
     win_percentage = (wins / num_games) * 100.0 if num_games > 0 else 0.0
     average_score = total_score / num_games if num_games > 0 else 0.0

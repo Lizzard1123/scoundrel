@@ -21,7 +21,6 @@ from scoundrel.rl.transformer_mlp.ppo_agent import PPOAgent
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import normalize_score
 
-# Simple Memory Buffer
 class Memory:
     def __init__(self):
         self.actions = []
@@ -88,7 +87,6 @@ def train_scoundrel(
     if seed is not None:
         print(f"Using game seed: {seed} (deterministic deck shuffling)")
 
-    # Initialize objects
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
     game_state = engine.restart()
     s_scal, s_seq = translator.encode_state(game_state)
@@ -98,7 +96,6 @@ def train_scoundrel(
     memory = Memory()
     writer = SummaryWriter(log_dir=str(log_dir)) if tensorboard else None
 
-    # Optional resume
     if resume_path:
         resume_path = Path(resume_path)
         if resume_path.exists():
@@ -119,26 +116,20 @@ def train_scoundrel(
         state = engine.restart()
         ep_reward = 0
 
-        for t in range(TRAIN_MAX_STEPS_PER_EPISODE): # Max steps per game
+        for t in range(TRAIN_MAX_STEPS_PER_EPISODE):
             time_step += 1
 
-            # 1. Translate State
             s_scal, s_seq = translator.encode_state(state)
             mask = translator.get_action_mask(state)
 
-            # 2. Select Action
             action, log_prob, _ = agent.select_action(s_scal, s_seq, mask)
 
-            # 3. Execute in Engine
-            # (Bridge: Decode index 0-4 to engine command)
             engine_action = translator.decode_action(action)
             engine.execute_turn(engine_action)
             next_state = engine.get_state()
             done = next_state.game_over
-            # Normalize reward to [0, 1] using shared utility
             reward = normalize_score(next_state.score) if done else 0
 
-            # 4. Save to Memory
             memory.states_scal.append(s_scal)
             memory.states_seq.append(s_seq)
             memory.actions.append(action)
@@ -150,7 +141,6 @@ def train_scoundrel(
             state = next_state
             ep_reward += reward
 
-            # 5. Update PPO
             if time_step % update_timestep == 0:
                 metrics = agent.update(memory)
                 if writer and metrics:
@@ -167,25 +157,20 @@ def train_scoundrel(
                 break
 
         reward_window.append(ep_reward)
-        # Convert normalized reward back to raw score for best tracking
         current_raw_score = ep_reward * 218 - 188
         best_raw_score = max(best_raw_score, current_raw_score)
 
-        # TensorBoard logging
         if writer:
             writer.add_scalar("episode/reward", ep_reward, i_episode)
             writer.add_scalar("episode/steps", t + 1, i_episode)
             writer.add_scalar("episode/best_raw_score_so_far", best_raw_score, i_episode)
             writer.add_scalar("episode/avg_reward_window", sum(reward_window) / len(reward_window), i_episode)
 
-
-        # Periodic checkpointing
         if save_interval and (i_episode % save_interval == 0):
             periodic_checkpoint = checkpoint_path.parent / f"ppo_episode_{i_episode}.pt"
             torch.save(agent.policy.state_dict(), periodic_checkpoint)
 
     print("--- Training Complete ---")
-    # Final checkpoint
     torch.save(agent.policy.state_dict(), checkpoint_path)
     if writer:
         writer.flush()
@@ -199,20 +184,16 @@ def sample_from_model(agent, engine_state):
     """
     translator = ScoundrelTranslator()
 
-    # Encode
     s_scal, s_seq = translator.encode_state(engine_state)
     mask = translator.get_action_mask(engine_state)
 
-    # Infer
-    agent.policy.eval() # Set to eval mode
+    agent.policy.eval()
     with torch.no_grad():
         logits, _ = agent.policy(s_scal, s_seq)
 
-        # Apply mask
         logits[~mask.unsqueeze(0)] = float('-inf')
         probs = F.softmax(logits, dim=-1)
 
-        # Greedy selection for inference (or sample if you prefer variety)
         action_idx = int(torch.argmax(probs).item())
 
     action_str = translator.decode_action(action_idx)

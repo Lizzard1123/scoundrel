@@ -50,7 +50,6 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
     engine = GameManager(seed=seed)
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
 
-    # Determine input dim
     init_state = engine.restart()
     s_scal, _ = translator.encode_state(init_state)
     agent = _load_agent(checkpoint, input_dim=s_scal.shape[1])
@@ -59,7 +58,6 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
 
     state = engine.get_state()
     while not state.exit:
-        # Sample next action greedily
         action_enum, probs = _greedy_action(agent, translator, state)
         action_text = format_action(action_enum)
         ui_text = f"Next action: [bold]{action_text}[/bold]"
@@ -83,13 +81,11 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
             state = engine.restart()
             continue
         if state.game_over:
-            # Ignore other inputs while game over
             continue
         if user in ("", " ", "s", "step"):
             engine.execute_turn(action_enum)
             state = engine.get_state()
             continue
-        # Unrecognized input: loop and resample
         state = engine.get_state()
 
 

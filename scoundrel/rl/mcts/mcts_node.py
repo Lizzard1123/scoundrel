@@ -50,10 +50,8 @@ class MCTSNode:
         
         for child in self.children:
             if child.visits == 0:
-                # Prioritize unvisited children
                 return child
             
-            # UCB1 formula: exploitation + exploration
             exploitation = child.value / child.visits
             exploration = exploration_constant * math.sqrt(
                 math.log(self.visits) / child.visits

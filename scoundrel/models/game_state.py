@@ -31,7 +31,6 @@ class GameState:
             return -300
         score_val = 0
         if self.health <= 0:
-            # Calculate negative score
             remaining_monsters = [
                 c
                 for c in self.dungeon + self.room
@@ -39,7 +38,6 @@ class GameState:
             ]
             score_val = self.health - sum(m.value for m in remaining_monsters)
         else:
-            # Calculate positive score
             last_potion = next(
                 (c for c in reversed(self.discard) if c.type == CardType.POTION), None
             )

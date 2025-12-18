@@ -25,8 +25,6 @@ from scoundrel.rl.mcts.constants import (
     MCTS_TRANSPOSITION_TABLE_SIZE,
 )
 
-# Suit to index mapping for efficient hashing
-# HEARTS=0, DIAMONDS=1, CLUBS=2, SPADES=3
 _SUIT_TO_INDEX = {suit: idx for idx, suit in enumerate(Suit)}
 
 
@@ -61,7 +59,6 @@ class TranspositionTable:
             Cached normalized reward if found, None otherwise
         """
         if state_hash in self.cache:
-            # Move to end (most recently used)
             reward = self.cache.pop(state_hash)
             self.cache[state_hash] = reward
             self.hits += 1
@@ -79,10 +76,8 @@ class TranspositionTable:
             reward: Normalized reward from simulation
         """
         if state_hash in self.cache:
-            # Update existing entry and move to end
             self.cache.pop(state_hash)
         elif len(self.cache) >= self.max_size:
-            # Evict least recently used (first item)
             self.cache.popitem(last=False)
         
         self.cache[state_hash] = reward
@@ -128,19 +123,16 @@ def _run_worker_simulations(args: tuple) -> Dict:
     """
     game_state, num_simulations, worker_id, exploration_constant, max_depth, use_random_rollout = args
     
-    # Create a new agent for this worker (each worker is independent)
     agent = MCTSAgent(
         num_simulations=num_simulations,
         exploration_constant=exploration_constant,
         max_depth=max_depth,
         use_random_rollout=use_random_rollout,
-        num_workers=0  # Disable parallelization in worker
+        num_workers=0
     )
     
-    # Run sequential search
     root = agent._sequential_search(game_state)
     
-    # Extract action statistics from root's children
     action_stats = {}
     for child in root.children:
         action_stats[child.action] = {
@@ -148,7 +140,6 @@ def _run_worker_simulations(args: tuple) -> Dict:
             'value': child.value
         }
     
-    # Get cache statistics from worker
     cache_stats = agent.get_cache_stats()
     
     return {
@@ -203,7 +194,6 @@ class MCTSAgent:
         Returns:
             Action index (0-4)
         """
-        # Determine if parallelization should be used
         use_parallel = self.num_workers > 1
         
         if use_parallel:
@@ -211,12 +201,9 @@ class MCTSAgent:
         else:
             root = self._sequential_search(game_state)
         
-        # Store root for get_action_stats
         self._last_root = root
         
-        # Select action with most visits
         if not root.children:
-            # No simulations completed, return random valid action
             valid_actions = self._get_valid_actions(game_state)
             return random.choice(valid_actions) if valid_actions else 0
         
@@ -235,23 +222,15 @@ class MCTSAgent:
         """
         root = self._create_node(game_state)
         
-        # Run MCTS simulations
         for _ in range(self.num_simulations):
-            # Start from root state with determinization
-            # This handles hidden information: shuffles unknown cards, keeps known cards
             simulation_state = self._determinize_state(game_state)
             
-            # 1. Selection: Traverse tree to find node to expand
             node, simulation_state = self._select(root, simulation_state)
             
-            # 2. Expansion: Add new child node if not terminal
             if not simulation_state.game_over and not node.is_fully_expanded():
                 node, simulation_state = self._expand(node, simulation_state)
             
-            # 3. Simulation: Play out from this node to get reward
-            # Early termination: if game is already over, calculate reward directly
             if simulation_state.game_over:
-                # Game is terminal, calculate reward immediately without simulation
                 state_hash = self._hash_state(simulation_state)
                 cached_reward = self.transposition_table.get(state_hash)
                 if cached_reward is not None:
@@ -262,7 +241,6 @@ class MCTSAgent:
             else:
                 reward = self._simulate(simulation_state)
             
-            # 4. Backpropagation: Update all nodes in path
             self._backpropagate(node, reward)
         
         return root
@@ -278,20 +256,13 @@ class MCTSAgent:
         Returns:
             Aggregated root node with combined simulation results
         """
-        # Note: We don't reset accumulated stats here - they accumulate across moves
-        # Cache size is now accumulated, not reset per move
-        
-        # Ensure we use 'spawn' method for multiprocessing (required on macOS)
         ctx = mp.get_context('spawn')
         
-        # Divide simulations among workers
         sims_per_worker = self.num_simulations // self.num_workers
         remaining_sims = self.num_simulations % self.num_workers
         
-        # Create worker arguments - include all parameters needed to recreate agent
         worker_args = []
         for i in range(self.num_workers):
-            # Distribute remaining simulations to first workers
             num_sims = sims_per_worker + (1 if i < remaining_sims else 0)
             worker_args.append((
                 game_state, 
@@ -302,17 +273,14 @@ class MCTSAgent:
                 self.use_random_rollout
             ))
         
-        # Run workers in parallel using spawn context
         with ProcessPoolExecutor(max_workers=self.num_workers, mp_context=ctx) as executor:
             worker_results = list(executor.map(
                 _run_worker_simulations,
                 worker_args
             ))
         
-        # Aggregate cache statistics from all workers
         self._aggregate_cache_stats(worker_results)
         
-        # Aggregate results from all workers
         return self._aggregate_roots(worker_results, game_state)
     
     def _aggregate_cache_stats(self, worker_results: List[Dict]):
@@ -334,9 +302,6 @@ class MCTSAgent:
                 total_misses += cache_stats.get('misses', 0)
                 total_cache_size += cache_stats.get('size', 0)
         
-        # Accumulate statistics across all moves (don't reset, accumulate)
-        # Note: In parallel mode, workers terminate after each move, so we accumulate
-        # stats across moves to get total statistics for the entire game/session
         if not hasattr(self, '_accumulated_hits'):
             self._accumulated_hits = 0
             self._accumulated_misses = 0
@@ -344,17 +309,11 @@ class MCTSAgent:
         
         self._accumulated_hits += total_hits
         self._accumulated_misses += total_misses
-        # Accumulate cache size across moves (sum of all unique states seen across all moves)
-        # Note: This is an approximation - actual unique states might be less due to overlaps
-        # between workers and moves, but it gives a sense of total cache usage
         self._accumulated_cache_size += total_cache_size
         
-        # Update main agent's cache statistics to reflect accumulated values
         self.transposition_table.hits = self._accumulated_hits
         self.transposition_table.misses = self._accumulated_misses
-        # Clear the main cache dict (we're tracking aggregate stats, not actual cache contents)
         self.transposition_table.cache.clear()
-        # Set aggregated_cache_size for get_cache_stats() to use
         self._aggregated_cache_size = self._accumulated_cache_size
     
     def _aggregate_roots(
@@ -373,12 +332,10 @@ class MCTSAgent:
         Returns:
             Root node with aggregated statistics
         """
-        # Create aggregated root node
         root = self._create_node(game_state)
-        root.untried_actions = []  # Mark as fully expanded
+        root.untried_actions = []
         
-        # Collect all actions seen across workers
-        action_stats = {}  # action -> {visits, value}
+        action_stats = {}
         
         for worker_result in worker_results:
             for action, stats in worker_result['action_stats'].items():
@@ -387,10 +344,7 @@ class MCTSAgent:
                 action_stats[action]['visits'] += stats['visits']
                 action_stats[action]['value'] += stats['value']
         
-        # Create child nodes for each action with aggregated stats
         for action, stats in action_stats.items():
-            # Create a dummy state hash for the child (not used for action selection)
-            # Use a deterministic integer hash based on action
             child_hash = hash(("aggregated_child", action))
             child = MCTSNode(
                 state_hash=child_hash,
@@ -401,7 +355,6 @@ class MCTSAgent:
             )
             root.children.append(child)
         
-        # Update root visits (sum of all child visits)
         root.visits = sum(child.visits for child in root.children)
         
         return root
@@ -420,7 +373,6 @@ class MCTSAgent:
         stats = []
         for child in self._last_root.children:
             avg_value = child.value / child.visits if child.visits > 0 else 0
-            # Calculate UCB1 (same as used during search)
             if child.visits > 0 and self._last_root.visits > 0:
                 ucb1 = avg_value + self.exploration_constant * math.sqrt(
                     math.log(self._last_root.visits) / child.visits
@@ -436,7 +388,6 @@ class MCTSAgent:
                 'ucb1': ucb1
             })
         
-        # Sort by action index for consistent display
         stats.sort(key=lambda x: x['action'])
         return stats
     
@@ -451,21 +402,13 @@ class MCTSAgent:
             Dictionary with hits, misses, size, max_size, and hit_rate
         """
         stats = self.transposition_table.stats()
-        # If we have aggregated cache size from parallel workers, use it
         if hasattr(self, '_aggregated_cache_size'):
             stats['size'] = self._aggregated_cache_size
-            # Max size is per-worker, so total max is num_workers * max_size
             stats['max_size'] = self.num_workers * self.transposition_table.max_size if self.num_workers > 1 else self.transposition_table.max_size
         return stats
     
     def clear_cache(self):
-        """
-        Clear the transposition table cache.
-        
-        Useful for debugging, testing, or memory management in long-running processes.
-        Note: This method is currently not used in the main codebase but provides
-        useful functionality for external use cases.
-        """
+        """Clear the transposition table cache."""
         self.transposition_table.clear()
     
     def _create_node(
@@ -500,42 +443,27 @@ class MCTSAgent:
         Returns:
             Integer hash of the game state
         """
-        # Helper function to convert card to integer
-        # Uses suit_index * 100 + card_value to ensure unique integer per card
         def card_to_int(card):
             suit_index = _SUIT_TO_INDEX[card.suit]
             return suit_index * 100 + card.value
         
-        # Convert room cards to integers
         room_tuple = tuple(card_to_int(c) for c in game_state.room)
         
-        # Convert first 5 dungeon cards to integers
         dungeon_cards = game_state.dungeon[:5]
         dungeon_tuple = tuple(card_to_int(c) for c in dungeon_cards)
         
-        # Weapon value: card.value if equipped, else 0
         weapon_value = game_state.equipped_weapon.value if game_state.equipped_weapon else 0
         
-        # Create tuple of key state features and hash it
         state_tuple = (game_state.health, weapon_value, room_tuple, dungeon_tuple)
         return hash(state_tuple)
     
     def _get_valid_actions(self, game_state: GameState) -> List[int]:
-        """
-        Get list of valid action indices for current state.
-        Uses inline validation to avoid tensor creation overhead.
-        
-        Actions:
-        - 0-3: Pick card from room (valid if index < len(room))
-        - 4: Avoid room (valid if can_avoid is True)
-        """
+        """Get list of valid action indices for current state."""
         valid_actions = []
         
-        # Pick actions (0-3): valid if room has a card at that index
         for i in range(len(game_state.room)):
             valid_actions.append(i)
         
-        # Avoid action (4): valid if can_avoid is True
         if game_state.can_avoid:
             valid_actions.append(4)
         
@@ -551,33 +479,25 @@ class MCTSAgent:
         
         while current_node.is_fully_expanded() and current_node.children and not current_state.game_over:
             current_node = current_node.best_child(self.exploration_constant)
-            # Apply action to state using pure function (no engine creation)
             action_enum = self.translator.decode_action(current_node.action)
             current_state = apply_action_to_state(current_state, action_enum)
         
         return current_node, current_state
     
     def _expand(self, node: MCTSNode, game_state: GameState) -> tuple[MCTSNode, GameState]:
-        """
-        Expansion phase: Add a new child node for an untried action.
-        Returns the new child node and its corresponding game state.
-        """
-        # Early termination: don't expand if game is already over
+        """Expansion phase: Add a new child node for an untried action."""
         if game_state.game_over:
             return node, game_state
         
         if len(node.untried_actions) == 0:
             return node, game_state
         
-        # Select random untried action
         action = random.choice(node.untried_actions)
         node.untried_actions.remove(action)
         
-        # Apply action to get new state using pure function (no engine creation)
         action_enum = self.translator.decode_action(action)
         new_state = apply_action_to_state(game_state, action_enum)
         
-        # Create new child node
         child_node = self._create_node(new_state, parent=node, action=action)
         node.children.append(child_node)
         
@@ -590,60 +510,46 @@ class MCTSAgent:
         
         Uses transposition table to cache simulation results for identical states.
         """
-        # Check transposition table for cached result
         state_hash = self._hash_state(game_state)
         cached_reward = self.transposition_table.get(state_hash)
         if cached_reward is not None:
             return cached_reward
         
-        # Early termination: if game is already over, return reward immediately
         if game_state.game_over:
             reward = normalize_score(game_state.score)
             self.transposition_table.put(state_hash, reward)
             return reward
         
-        # Run simulation using pure function (no engine creation overhead)
         current_state = game_state
         
         depth = 0
         while depth < self.max_depth:
-            # Early termination: check if game is over before continuing
             if current_state.game_over:
                 break
             
-            # Get valid actions
             valid_actions = self._get_valid_actions(current_state)
             if not valid_actions:
                 break
             
-            # Select action using rollout policy
-            # Pass valid_actions to avoid recomputation in policy methods
             if self.use_random_rollout:
                 action = self._random_policy(current_state, valid_actions)
             else:
                 action = self._heuristic_policy(current_state, valid_actions)
             
-            # Apply action using pure function (matches pattern used in _select and _expand)
             action_enum = self.translator.decode_action(action)
             current_state = apply_action_to_state(current_state, action_enum)
             depth += 1
             
-            # Early termination: check game_over immediately after action
-            # (loop condition will also check at start of next iteration, but this avoids
-            # unnecessary work like getting valid actions if game just ended)
             if current_state.game_over:
                 break
         
-        # Calculate and cache normalized reward
         reward = normalize_score(current_state.score)
         self.transposition_table.put(state_hash, reward)
         
         return reward
     
     def _backpropagate(self, node: MCTSNode, reward: float):
-        """
-        Backpropagation phase: Update all nodes in path with simulation result.
-        """
+        """Backpropagation phase: Update all nodes in path with simulation result."""
         current_node = node
         while current_node is not None:
             current_node.update(reward)
@@ -671,53 +577,44 @@ class MCTSAgent:
         if not valid_actions:
             return 0
         
-        # Early exit: If we can avoid and health is low, prefer avoiding
         if game_state.can_avoid and game_state.health < 8:
-            return 4  # Avoid
+            return 4
         
-        # Evaluate each card in the room
         best_action = None
         best_score = float('-inf')
         
-        # Pre-compute common values to avoid repeated property access
         health = game_state.health
         equipped_weapon = game_state.equipped_weapon
         can_use_potion = game_state.can_use_potion
         weapon_monsters = game_state.weapon_monsters
         
         for action_idx in valid_actions:
-            if action_idx == 4:  # Avoid action
-                score = -5  # Slightly discourage avoiding unless necessary
+            if action_idx == 4:
+                score = -5
             else:
                 card = game_state.room[action_idx]
                 card_type = card.type
                 
                 if card_type == CardType.POTION:
-                    # Value potions based on how much health we need
                     health_needed = 20 - health
                     if health_needed > 0 and can_use_potion:
-                        score = min(card.value, health_needed) * 2  # High value
+                        score = min(card.value, health_needed) * 2
                     else:
-                        score = -10  # Don't take if we can't use it
+                        score = -10
                 
                 elif card_type == CardType.WEAPON:
-                    # Value weapons based on their strength
                     if equipped_weapon:
-                        # Upgrade if new weapon is better
                         score = (card.value - equipped_weapon.value) * 2
                     else:
-                        score = card.value * 3  # High value for first weapon
+                        score = card.value * 3
                 
                 elif card_type == CardType.MONSTER:
-                    # Use Combat class methods for consistency with game logic
                     can_use_weapon = Combat.can_use_weapon(game_state, card)
                     damage = Combat.calculate_damage(card, equipped_weapon)
                     
-                    # Early exit: Avoid if it would kill us
                     if damage >= health:
                         score = -1000
                     else:
-                        # Negative score based on damage
                         score = -damage * 2
             
             if score > best_score:
@@ -730,38 +627,20 @@ class MCTSAgent:
         """
         Apply determinization to handle hidden information.
         Shuffles unknown cards in the dungeon while keeping known cards in place.
-        
-        In Scoundrel, when you avoid a room, those 4 cards go to the bottom of the dungeon.
-        The agent knows their position (they're at indices >= number_avoided * 4).
-        The cards at the top (indices < number_avoided * 4) are unknown and should be shuffled.
-        
-        Optimized to minimize copying:
-        - When no determinization needed: returns full copy (necessary for safety)
-        - When determinization needed: copies state once, shuffles efficiently using minimal operations
         """
-        # Early return: no determinization needed when no rooms have been avoided
-        # Still need to copy to avoid mutation, but this is the minimal case
         if game_state.number_avoided == 0 or not game_state.dungeon:
             return game_state.copy()
         
-        # Copy state once (necessary since engine will mutate it during simulation)
         determinized_state = game_state.copy()
         
-        # Calculate unknown count (cards that need shuffling)
         unknown_count = determinized_state.number_avoided * 4
         
-        # Optimized shuffling: extract unknown portion, shuffle it, then reconstruct
-        # This minimizes intermediate list creation
         if unknown_count < len(determinized_state.dungeon):
-            # Extract and shuffle unknown portion in one step
             unknown_cards = determinized_state.dungeon[:unknown_count]
             random.shuffle(unknown_cards)
             
-            # Reconstruct dungeon: shuffled unknown + preserved known (single slice operation)
             determinized_state.dungeon = unknown_cards + determinized_state.dungeon[unknown_count:]
         else:
-            # Edge case: all cards are unknown (unknown_count >= len(dungeon))
-            # Shuffle entire dungeon in-place
             random.shuffle(determinized_state.dungeon)
         
         return determinized_state

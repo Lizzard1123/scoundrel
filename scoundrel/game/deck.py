@@ -28,7 +28,6 @@ class Deck:
             for value in values:
                 cards.append(Card(value, suit))
 
-        # Seed random before shuffling if seed provided
         if seed is not None:
             random.seed(seed)
         random.shuffle(cards)

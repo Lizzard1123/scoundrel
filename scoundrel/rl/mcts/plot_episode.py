@@ -40,14 +40,11 @@ def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: boo
         print("-" * 70)
     
     while not state.game_over:
-        # Get next action from MCTS (greedy = most visited)
         action_idx = agent.select_action(state)
         action_enum = agent.translator.decode_action(action_idx)
         
-        # Get action statistics to track average score
         stats = agent.get_action_stats()
         
-        # Calculate weighted average score across all actions
         if stats:
             total_visits = sum(s['visits'] for s in stats)
             weighted_avg = sum(s['avg_value'] * s['visits'] for s in stats) / total_visits if total_visits > 0 else 0
@@ -55,11 +52,9 @@ def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: boo
         else:
             avg_raw_score = 0
         
-        # Track the data
         steps.append(step_count)
         scores.append(avg_raw_score)
         
-        # Format action name for display
         if action_idx == 4:
             action_name = "Avoid"
         else:
@@ -69,14 +64,12 @@ def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: boo
         if verbose:
             print(f"{step_count:<6} {action_name:<10} {avg_raw_score:>+6d}      {state.score:>+6d}        {state.health:<8} {'OK' if state.health > 0 else 'DEAD'}")
         
-        # Execute action
         engine.execute_turn(action_enum)
         state = engine.get_state()
         step_count += 1
     
-    # Add final state
     steps.append(step_count)
-    scores.append(state.score)  # Use actual final score
+    scores.append(state.score)
     
     if verbose:
         print("-" * 70)
@@ -101,27 +94,21 @@ def plot_episode(steps, scores, final_score, num_simulations):
     """
     plt.figure(figsize=(12, 6))
     
-    # Plot the line
     plt.plot(steps, scores, linewidth=2, color='#2E86AB', marker='o', markersize=4, alpha=0.8)
     
-    # Add horizontal line at y=0
     plt.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
     
-    # Styling
     plt.xlabel('Step', fontsize=12, fontweight='bold')
     plt.ylabel('Average Score', fontsize=12, fontweight='bold')
     plt.title(f'MCTS Episode Score Progression\n({num_simulations} simulations/move, Final Score: {final_score:+d})', 
               fontsize=14, fontweight='bold', pad=20)
     plt.grid(True, alpha=0.3, linestyle=':', linewidth=0.5)
     
-    # Add some styling
     plt.tight_layout()
     
-    # Color the area under the curve
     plt.fill_between(steps, scores, 0, where=[s >= 0 for s in scores], alpha=0.2, color='green', interpolate=True)
     plt.fill_between(steps, scores, 0, where=[s < 0 for s in scores], alpha=0.2, color='red', interpolate=True)
     
-    # Show the plot
     plt.show()
 
 
@@ -183,10 +170,8 @@ def plot_batch_episodes(episodes_data, num_simulations, confidence_level=0.95):
         num_simulations: Number of simulations used
         confidence_level: Confidence level for bounds (default 0.95 for 95%)
     """
-    # Find the maximum number of steps across all episodes
     max_steps = max(len(steps) for steps, _, _ in episodes_data)
     
-    # Create aligned arrays (pad shorter episodes with their final score)
     aligned_scores = []
     for steps, scores, _ in episodes_data:
         padded_scores = scores + [scores[-1]] * (max_steps - len(scores))
@@ -195,43 +180,34 @@ def plot_batch_episodes(episodes_data, num_simulations, confidence_level=0.95):
     aligned_scores = np.array(aligned_scores)
     steps_array = np.arange(max_steps)
     
-    # Calculate statistics
     mean_scores = np.mean(aligned_scores, axis=0)
     std_scores = np.std(aligned_scores, axis=0)
     
-    # Calculate confidence bounds using standard error
     n_episodes = len(episodes_data)
-    # Using t-distribution for small samples, z for large samples
     if n_episodes < 30:
         from scipy import stats
         t_value = stats.t.ppf((1 + confidence_level) / 2, n_episodes - 1)
         margin = t_value * std_scores / np.sqrt(n_episodes)
     else:
-        z_value = 1.96 if confidence_level == 0.95 else 2.576  # 95% or 99%
+        z_value = 1.96 if confidence_level == 0.95 else 2.576
         margin = z_value * std_scores / np.sqrt(n_episodes)
     
     lower_bound = mean_scores - margin
     upper_bound = mean_scores + margin
     
-    # Create the plot
     plt.figure(figsize=(14, 7))
     
-    # Plot individual episodes with low alpha
     for i, (steps, scores, _) in enumerate(episodes_data):
         plt.plot(steps, scores, linewidth=0.5, alpha=0.15, color='gray')
     
-    # Plot confidence bounds
     plt.fill_between(steps_array, lower_bound, upper_bound, 
                      alpha=0.3, color='#2E86AB', label=f'{int(confidence_level*100)}% Confidence Interval')
     
-    # Plot mean line
     plt.plot(steps_array, mean_scores, linewidth=2.5, color='#2E86AB', 
              label=f'Mean (n={n_episodes})', marker='o', markersize=3, markevery=max(1, max_steps//20))
     
-    # Add horizontal line at y=0
     plt.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
     
-    # Styling
     plt.xlabel('Step', fontsize=12, fontweight='bold')
     plt.ylabel('Average Score', fontsize=12, fontweight='bold')
     
@@ -246,10 +222,8 @@ def plot_batch_episodes(episodes_data, num_simulations, confidence_level=0.95):
     plt.grid(True, alpha=0.3, linestyle=':', linewidth=0.5)
     plt.legend(loc='best', fontsize=10)
     
-    # Add some styling
     plt.tight_layout()
     
-    # Show the plot
     plt.show()
 
 
@@ -301,25 +275,21 @@ def main():
     print()
     
     if args.batch:
-        # Batch mode: run multiple episodes and show mean with confidence bounds
         episodes_data = run_batch_episodes(
             num_episodes=args.batch,
             num_simulations=args.num_simulations,
-            verbose=args.verbose or True,  # Always show summary in batch mode
+            verbose=args.verbose or True,
             seed=args.seed
         )
         
-        # Plot the batch results
         plot_batch_episodes(episodes_data, args.num_simulations, args.confidence)
     else:
-        # Single episode mode
         steps, scores, final_score = run_greedy_episode(
             num_simulations=args.num_simulations,
             verbose=args.verbose,
             seed=args.seed
         )
         
-        # Plot the results
         plot_episode(steps, scores, final_score, args.num_simulations)
 
 

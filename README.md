@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🎴 Scoundrel
+<img src="images/scoundrel_banner.png" alt="Scoundrel Banner" width="100%" style="border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.4); border: 2px solid #8b5a2b;"/>
 
-**A Python implementation of the Scoundrel card game with AI agents**
+**A Python implementation of the Scoundrel card game**
 
 [![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://www.python.org/)

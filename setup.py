@@ -13,6 +13,8 @@ setup(
             'mcts=scoundrel.rl.mcts.viewer:main',
             'mcts-plot=scoundrel.rl.mcts.plot_episode:main',
             'mcts-eval=scoundrel.rl.mcts.eval:main',
+            'mcts-collect=scoundrel.rl.mcts.collect:main',
+            'mcts-evaluate-collection=scoundrel.rl.mcts.evaluate_collection:main',
         ],
     },
 )

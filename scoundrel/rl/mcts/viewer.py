@@ -2,6 +2,7 @@
 Interactive viewer for watching MCTS agent play Scoundrel.
 """
 import argparse
+import os
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
@@ -30,6 +31,7 @@ def run_mcts_viewer(
         num_workers: Number of parallel workers (0 or 1 disables parallelization)
         seed: Optional seed for deterministic deck shuffling (same seed = same game sequence)
     """
+    os.system('resize -s 14 88')
     agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
     engine = GameManager(seed=seed)
     

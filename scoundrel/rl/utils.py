@@ -40,7 +40,7 @@ def denormalize_score(normalized_score: float) -> int:
     Returns:
         Raw game score
     """
-    return int(normalized_score * SCORE_RANGE - SCORE_MIN)
+    return int(normalized_score * SCORE_RANGE + SCORE_MIN)
 
 
 def format_action(action: Action) -> str:

@@ -19,6 +19,7 @@ from scoundrel.rl.transformer_mlp.constants import (
 )
 from scoundrel.rl.transformer_mlp.ppo_agent import PPOAgent
 from scoundrel.rl.translator import ScoundrelTranslator
+from scoundrel.rl.utils import normalize_score
 
 # Simple Memory Buffer
 class Memory:
@@ -134,8 +135,8 @@ def train_scoundrel(
             engine.execute_turn(engine_action)
             next_state = engine.get_state()
             done = next_state.game_over
-            # Normalize reward to [0, 1]: min=-188, max=30, range=218
-            reward = ((next_state.score + 188) / 218) if done else 0
+            # Normalize reward to [0, 1] using shared utility
+            reward = normalize_score(next_state.score) if done else 0
 
             # 4. Save to Memory
             memory.states_scal.append(s_scal)
@@ -243,8 +244,3 @@ if __name__ == "__main__":
         resume_path=args.resume_from,
         seed=args.seed,
     )
-
-    # Sample run
-    # mock_env = GameManager()
-    # state = mock_env.restart()
-    # sample_from_model(trained_agent, state)

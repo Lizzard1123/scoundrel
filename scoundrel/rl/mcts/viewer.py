@@ -2,21 +2,12 @@
 Interactive viewer for watching MCTS agent play Scoundrel.
 """
 import argparse
-from pathlib import Path
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
 from scoundrel.rl.mcts.constants import MCTS_NUM_SIMULATIONS, MCTS_NUM_WORKERS
-
-
-def _format_action(action: Action) -> str:
-    """Convert Action enum to human-readable string."""
-    if action == Action.AVOID:
-        return "avoid"
-    if action in {Action.USE_1, Action.USE_2, Action.USE_3, Action.USE_4}:
-        return f"use {action.value + 1}"
-    return action.name.lower()
+from scoundrel.rl.utils import format_action, denormalize_score
 
 
 def _format_action_name(action_idx: int) -> str:
@@ -24,12 +15,6 @@ def _format_action_name(action_idx: int) -> str:
     if action_idx == 4:
         return "Avoid"
     return f"Card {action_idx + 1}"
-
-
-def _denormalize_value(normalized_value: float) -> int:
-    """Convert normalized value back to raw game score."""
-    # Reverse of: (score + 188) / 218
-    return int(normalized_value * 218 - 188)
 
 
 def run_mcts_viewer(
@@ -57,10 +42,10 @@ def run_mcts_viewer(
         # Get next action from MCTS
         action_idx = agent.select_action(state)
         action_enum = agent.translator.decode_action(action_idx)
-        action_text = _format_action(action_enum)
+        action_text = format_action(action_enum)
         
         # Get action statistics
-        stats = agent.get_action_stats(state)
+        stats = agent.get_action_stats()
         
         # Format compact action display: Next: [use 2] | Scores: 1:0.65/450 2:0.72/892 3:0.60/380 4:0.59/278
         ui_text = f"Next: [bold green]{action_text}[/bold green]"
@@ -76,7 +61,7 @@ def run_mcts_viewer(
                     label = str(s['action'] + 1)
                 
                 visits = s['visits']
-                raw_score = _denormalize_value(s['avg_value'])
+                raw_score = denormalize_score(s['avg_value'])
                 
                 # Format: positive scores in green, negative in red/dim
                 if s['action'] == action_idx:

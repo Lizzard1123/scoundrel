@@ -6,15 +6,7 @@ from typing import Callable, Any
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
-
-
-def _format_action(action: Action) -> str:
-    """Convert Action enum to human-readable string."""
-    if action == Action.AVOID:
-        return "avoid"
-    if action in {Action.USE_1, Action.USE_2, Action.USE_3, Action.USE_4}:
-        return f"use {action.value + 1}"
-    return action.name.lower()
+from scoundrel.rl.utils import format_action
 
 
 def run_interactive_viewer(
@@ -43,7 +35,7 @@ def run_interactive_viewer(
     while not state.exit:
         # Get next action from the agent
         action_enum, extra_info = get_action_fn(state)
-        action_text = _format_action(action_enum)
+        action_text = format_action(action_enum)
         ui_text = f"Next action: [bold]{action_text}[/bold]"
         
         if state.game_over:

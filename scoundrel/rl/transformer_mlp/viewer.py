@@ -10,6 +10,7 @@ from scoundrel.rl.transformer_mlp.ppo_agent import PPOAgent
 from scoundrel.rl.transformer_mlp.transformer_mlp import _default_paths
 from scoundrel.rl.transformer_mlp.constants import STACK_SEQ_LEN
 from scoundrel.rl.translator import ScoundrelTranslator
+from scoundrel.rl.utils import format_action
 
 
 def _load_agent(checkpoint_path: Path, input_dim: int) -> PPOAgent:
@@ -20,14 +21,6 @@ def _load_agent(checkpoint_path: Path, input_dim: int) -> PPOAgent:
     agent.policy.eval()
     agent.policy_old.eval()
     return agent
-
-
-def _format_action(action: Action) -> str:
-    if action == Action.AVOID:
-        return "avoid"
-    if action in {Action.USE_1, Action.USE_2, Action.USE_3, Action.USE_4}:
-        return f"use {action.value + 1}"
-    return action.name.lower()
 
 
 def _greedy_action(agent: PPOAgent, translator: ScoundrelTranslator, state):
@@ -68,7 +61,7 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
     while not state.exit:
         # Sample next action greedily
         action_enum, probs = _greedy_action(agent, translator, state)
-        action_text = _format_action(action_enum)
+        action_text = format_action(action_enum)
         ui_text = f"Next action: [bold]{action_text}[/bold]"
 
         if state.game_over:

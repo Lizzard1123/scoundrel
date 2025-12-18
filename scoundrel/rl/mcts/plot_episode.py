@@ -5,18 +5,12 @@ Runs a greedy episode and displays the score over time.
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
 from scoundrel.rl.mcts.constants import MCTS_NUM_SIMULATIONS
-
-
-def _denormalize_value(normalized_value: float) -> int:
-    """Convert normalized value back to raw game score."""
-    # Reverse of: (score + 188) / 218
-    return int(normalized_value * 218 - 188)
+from scoundrel.rl.utils import denormalize_score
 
 
 def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: bool = False, seed: int = None):
@@ -51,13 +45,13 @@ def run_greedy_episode(num_simulations: int = MCTS_NUM_SIMULATIONS, verbose: boo
         action_enum = agent.translator.decode_action(action_idx)
         
         # Get action statistics to track average score
-        stats = agent.get_action_stats(state)
+        stats = agent.get_action_stats()
         
         # Calculate weighted average score across all actions
         if stats:
             total_visits = sum(s['visits'] for s in stats)
             weighted_avg = sum(s['avg_value'] * s['visits'] for s in stats) / total_visits if total_visits > 0 else 0
-            avg_raw_score = _denormalize_value(weighted_avg)
+            avg_raw_score = denormalize_score(weighted_avg)
         else:
             avg_raw_score = 0
         

@@ -1,6 +1,6 @@
 # scoundrel/game/game_manager.py
 import random
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from scoundrel.models.game_state import Action, GameState
 from scoundrel.models.card import Card, CardAction, CardEffect, CardType
 from scoundrel.game.deck import Deck
@@ -28,28 +28,6 @@ class GameManager:
         self.command_text = ""
         self.ui = TerminalUI(seed=seed)
         self.setup_game()
-    
-    @classmethod
-    def from_state(cls, game_state: GameState) -> 'GameManager':
-        """
-        Create a GameManager instance from an existing game state.
-        
-        This factory method bypasses normal initialization (seed generation,
-        UI creation, deck setup) for performance-critical use cases like MCTS
-        simulations where these are unnecessary.
-        
-        Args:
-            game_state: The game state to use (will be mutated during play)
-            
-        Returns:
-            GameManager instance with the provided state
-        """
-        instance = cls.__new__(cls)  # Create instance without calling __init__
-        instance.seed = None  # Not used in MCTS
-        instance.state = game_state
-        instance.command_text = ""  # Not used in MCTS, but initialize for safety
-        instance.ui = None  # Not used in MCTS
-        return instance
 
     def setup_game(self):
         self.state.dungeon = Deck.create_deck(self.seed)
@@ -65,13 +43,6 @@ class GameManager:
     def draw_room(self):
         """Draw cards from dungeon to fill room to 4 cards."""
         draw_room_in_state(self.state)
-
-    def avoid_room(self):
-        """Move room cards to bottom of dungeon and mark as avoided."""
-        self.state.dungeon.extend(self.state.room)
-        self.state.room = []
-        self.state.number_avoided += 1
-        self.state.last_room_avoided = True
 
     def parse_command(self, command: str) -> Action:
         """Parse command string into action and card index"""
@@ -109,11 +80,6 @@ class GameManager:
                     return Action.INVALID
             case _:
                 return Action.INVALID
-
-    def handle_card(self, card: Card):
-        """Handle a card being picked from the room. Returns log message."""
-        handle_card_in_state(self.state, card)
-        return CardEffect[card.type] + str(card)
 
     def get_state(self):
         return self.state

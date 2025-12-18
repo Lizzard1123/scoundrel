@@ -13,8 +13,10 @@ import multiprocessing as mp
 from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
 from scoundrel.models.card import Suit, CardType
+from scoundrel.game.combat import Combat
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.mcts.mcts_node import MCTSNode
+from scoundrel.rl.utils import normalize_score
 from scoundrel.rl.mcts.constants import (
     MCTS_EXPLORATION_CONSTANT,
     MCTS_MAX_DEPTH,
@@ -255,7 +257,7 @@ class MCTSAgent:
                 if cached_reward is not None:
                     reward = cached_reward
                 else:
-                    reward = self._normalize_reward(simulation_state.score)
+                    reward = normalize_score(simulation_state.score)
                     self.transposition_table.put(state_hash, reward)
             else:
                 reward = self._simulate(simulation_state)
@@ -404,7 +406,7 @@ class MCTSAgent:
         
         return root
     
-    def get_action_stats(self, game_state: GameState):
+    def get_action_stats(self):
         """
         Get statistics for all valid actions from the last MCTS search.
         Must be called after select_action().
@@ -457,7 +459,13 @@ class MCTSAgent:
         return stats
     
     def clear_cache(self):
-        """Clear the transposition table cache."""
+        """
+        Clear the transposition table cache.
+        
+        Useful for debugging, testing, or memory management in long-running processes.
+        Note: This method is currently not used in the main codebase but provides
+        useful functionality for external use cases.
+        """
         self.transposition_table.clear()
     
     def _create_node(
@@ -533,22 +541,6 @@ class MCTSAgent:
         
         return valid_actions
     
-    def _apply_action_to_state(self, game_state: GameState, action: Action) -> GameState:
-        """
-        Apply an action to a game state and return a new state.
-        
-        This eliminates the need for engine creation during selection and expansion.
-        Uses the shared pure function from game_logic module.
-        
-        Args:
-            game_state: Current game state (will be copied, not mutated)
-            action: Action to apply
-            
-        Returns:
-            New GameState with the action applied
-        """
-        return apply_action_to_state(game_state, action)
-    
     def _select(self, node: MCTSNode, game_state: GameState) -> tuple[MCTSNode, GameState]:
         """
         Selection phase: Traverse tree using UCB1 until we find a node to expand.
@@ -561,7 +553,7 @@ class MCTSAgent:
             current_node = current_node.best_child(self.exploration_constant)
             # Apply action to state using pure function (no engine creation)
             action_enum = self.translator.decode_action(current_node.action)
-            current_state = self._apply_action_to_state(current_state, action_enum)
+            current_state = apply_action_to_state(current_state, action_enum)
         
         return current_node, current_state
     
@@ -583,7 +575,7 @@ class MCTSAgent:
         
         # Apply action to get new state using pure function (no engine creation)
         action_enum = self.translator.decode_action(action)
-        new_state = self._apply_action_to_state(game_state, action_enum)
+        new_state = apply_action_to_state(game_state, action_enum)
         
         # Create new child node
         child_node = self._create_node(new_state, parent=node, action=action)
@@ -606,7 +598,7 @@ class MCTSAgent:
         
         # Early termination: if game is already over, return reward immediately
         if game_state.game_over:
-            reward = self._normalize_reward(game_state.score)
+            reward = normalize_score(game_state.score)
             self.transposition_table.put(state_hash, reward)
             return reward
         
@@ -633,7 +625,7 @@ class MCTSAgent:
             
             # Apply action using pure function (matches pattern used in _select and _expand)
             action_enum = self.translator.decode_action(action)
-            current_state = self._apply_action_to_state(current_state, action_enum)
+            current_state = apply_action_to_state(current_state, action_enum)
             depth += 1
             
             # Early termination: check game_over immediately after action
@@ -643,7 +635,7 @@ class MCTSAgent:
                 break
         
         # Calculate and cache normalized reward
-        reward = self._normalize_reward(current_state.score)
+        reward = normalize_score(current_state.score)
         self.transposition_table.put(state_hash, reward)
         
         return reward
@@ -717,19 +709,9 @@ class MCTSAgent:
                         score = card.value * 3  # High value for first weapon
                 
                 elif card_type == CardType.MONSTER:
-                    # Inline combat calculations to avoid function call overhead
-                    # Equivalent to: Combat.can_use_weapon(game_state, card)
-                    can_use_weapon = (
-                        equipped_weapon is not None and
-                        (not weapon_monsters or card.value <= weapon_monsters[-1].value)
-                    )
-                    
-                    # Calculate damage (equivalent to Combat.calculate_damage)
-                    if can_use_weapon:
-                        # damage = max(0, monster.value - weapon.value)
-                        damage = max(0, card.value - equipped_weapon.value)
-                    else:
-                        damage = card.value
+                    # Use Combat class methods for consistency with game logic
+                    can_use_weapon = Combat.can_use_weapon(game_state, card)
+                    damage = Combat.calculate_damage(card, equipped_weapon)
                     
                     # Early exit: Avoid if it would kill us
                     if damage >= health:
@@ -783,19 +765,4 @@ class MCTSAgent:
             random.shuffle(determinized_state.dungeon)
         
         return determinized_state
-    
-    def _normalize_reward(self, score: int) -> float:
-        """
-        Normalize game score to [0, 1] range.
-        
-        Score bounds:
-        - Min: -188 (die at 0 HP with max monsters remaining)
-          It takes exactly 20 damage to die, leaving 208-20=188 monster value
-          Score = 0 - 188 = -188
-        - Max: 30 (20 HP + max potion = 10)
-        - Range: 218
-        """
-        min_score = -188
-        max_score = 30
-        return (score - min_score) / (max_score - min_score)
 

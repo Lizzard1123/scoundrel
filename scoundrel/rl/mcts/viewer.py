@@ -4,18 +4,44 @@ Interactive viewer for watching MCTS agent play Scoundrel.
 import argparse
 import os
 
-from scoundrel.game.game_manager import GameManager
-from scoundrel.models.game_state import Action
+from scoundrel.models.game_state import Action, GameState
 from scoundrel.rl.mcts.mcts_agent import MCTSAgent
 from scoundrel.rl.mcts.constants import MCTS_NUM_SIMULATIONS, MCTS_NUM_WORKERS
 from scoundrel.rl.utils import format_action, denormalize_score
+from scoundrel.rl.viewer import run_interactive_viewer
 
 
-def _format_action_name(action_idx: int) -> str:
-    """Convert action index to display name (1-4 for cards, 'avoid' for 4)."""
-    if action_idx == 4:
-        return "Avoid"
-    return f"Card {action_idx + 1}"
+def _format_mcts_ui_text(action_enum: Action, extra_info: tuple[int, list]) -> str:
+    """Format UI text for MCTS with action stats."""
+    action_idx, stats = extra_info
+    action_text = format_action(action_enum)
+    ui_text = f"Next: [bold green]{action_text}[/bold green]"
+    
+    if stats:
+        score_parts = []
+        for s in stats:
+            if s['action'] == 4:
+                label = "A"
+            else:
+                label = str(s['action'] + 1)
+            
+            visits = s['visits']
+            raw_score = denormalize_score(s['avg_value'])
+            
+            if s['action'] == action_idx:
+                if raw_score > 0:
+                    score_parts.append(f"[bold green][{label}:{raw_score:+d}/{visits}][/bold green]")
+                else:
+                    score_parts.append(f"[bold yellow][{label}:{raw_score:+d}/{visits}][/bold yellow]")
+            else:
+                if raw_score > 0:
+                    score_parts.append(f"[green]{label}:{raw_score:+d}/{visits}[/green]")
+                else:
+                    score_parts.append(f"[dim]{label}:{raw_score:+d}/{visits}[/dim]")
+        
+        ui_text += " | " + " ".join(score_parts)
+    
+    return ui_text
 
 
 def run_mcts_viewer(
@@ -33,71 +59,23 @@ def run_mcts_viewer(
     """
     os.system('resize -s 14 88')
     agent = MCTSAgent(num_simulations=num_simulations, num_workers=num_workers)
-    engine = GameManager(seed=seed)
     
     parallel_str = f" | {num_workers} workers" if num_workers > 1 else ""
-    actions_title = f"MCTS ({num_simulations} simulations{parallel_str})"
+    label = f"MCTS ({num_simulations} simulations{parallel_str})"
     
-    state = engine.restart()
-    
-    while not state.exit:
+    def get_mcts_action(state: GameState) -> tuple[Action, tuple[int, list]]:
+        """Get MCTS action and return with action_idx and stats."""
         action_idx = agent.select_action(state)
         action_enum = agent.translator.decode_action(action_idx)
-        action_text = format_action(action_enum)
-        
         stats = agent.get_action_stats()
-        
-        ui_text = f"Next: [bold green]{action_text}[/bold green]"
-        
-        if stats:
-            score_parts = []
-            for s in stats:
-                if s['action'] == 4:
-                    label = "A"
-                else:
-                    label = str(s['action'] + 1)
-                
-                visits = s['visits']
-                raw_score = denormalize_score(s['avg_value'])
-                
-                if s['action'] == action_idx:
-                    if raw_score > 0:
-                        score_parts.append(f"[bold green][{label}:{raw_score:+d}/{visits}][/bold green]")
-                    else:
-                        score_parts.append(f"[bold yellow][{label}:{raw_score:+d}/{visits}][/bold yellow]")
-                else:
-                    if raw_score > 0:
-                        score_parts.append(f"[green]{label}:{raw_score:+d}/{visits}[/green]")
-                    else:
-                        score_parts.append(f"[dim]{label}:{raw_score:+d}/{visits}[/dim]")
-            
-            ui_text += " | " + " ".join(score_parts)
-        
-        if state.game_over:
-            ui_text += " | [r]estart [q]uit"
-        
-        engine.ui.display_game_state(
-            state,
-            actions_override=ui_text,
-            actions_title=actions_title,
-        )
-        
-        user = input("Space=step | r=restart | q=quit: ").strip().lower()
-        
-        if user in ("q", "quit"):
-            engine.execute_turn(Action.EXIT)
-            state = engine.get_state()
-            break
-        if user in ("r", "restart"):
-            state = engine.restart()
-            continue
-        if state.game_over:
-            continue
-        if user in ("", " ", "s", "step"):
-            engine.execute_turn(action_enum)
-            state = engine.get_state()
-            continue
-        state = engine.get_state()
+        return action_enum, (action_idx, stats)
+    
+    run_interactive_viewer(
+        get_action_fn=get_mcts_action,
+        label=label,
+        seed=seed,
+        format_ui_text_fn=_format_mcts_ui_text,
+    )
 
 
 def parse_args():

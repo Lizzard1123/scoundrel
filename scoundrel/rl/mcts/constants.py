@@ -2,8 +2,8 @@ STACK_SEQ_LEN = 40  # Max cards in dungeon deck (44 total - 4 dealt to room at s
 NUM_CARDS = 45  # Card embeddings: 0=pad, 1-44=actual cards
 ACTION_SPACE = 5  # 0-3: Pick Card 1-4, 4: Run/Skip Room
 
-MCTS_NUM_SIMULATIONS = 1000000
-MCTS_EXPLORATION_CONSTANT = 1.414  # UCB1 exploration constant (sqrt(2))
+MCTS_NUM_SIMULATIONS = 100000
+MCTS_EXPLORATION_CONSTANT = 0.1 #1.414  # UCB1 exploration constant (sqrt(2))
 MCTS_MAX_DEPTH = 120  # Maximum depth for simulation rollout (games typically end <100 steps, 1.5x safety margin)
 
 EVAL_NUM_GAMES = 10

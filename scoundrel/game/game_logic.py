@@ -79,12 +79,14 @@ def handle_card_in_state(game_state: GameState, card: Card) -> None:
             )
             game_state.weapon_monsters = []
         game_state.equipped_weapon = card
+        game_state.last_used_card = card
         
     elif card.type == CardType.POTION:
         if not game_state.used_potion:
             game_state.used_potion = True
             game_state.health = min(20, game_state.health + card.value)
         game_state.discard.append(card)
+        game_state.last_used_card = card
         
     elif card.type == CardType.MONSTER:
         if Combat.can_use_weapon(game_state, card):
@@ -94,6 +96,7 @@ def handle_card_in_state(game_state: GameState, card: Card) -> None:
             damage = card.value
             game_state.discard.append(card)
         game_state.health -= damage
+        game_state.last_used_card = card
 
 
 def draw_room_in_state(game_state: GameState) -> None:

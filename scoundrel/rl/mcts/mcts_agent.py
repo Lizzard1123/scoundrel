@@ -437,6 +437,9 @@ class MCTSAgent:
         Converts cards to integers: suit_index * 100 + card_value
         Then uses Python's built-in hash() on a tuple of state features.
         
+        IMPORTANT: Must include last_used_card in hash since it affects score calculation
+        (bonus points depend on whether last card was a potion).
+        
         Args:
             game_state: Game state to hash
             
@@ -454,7 +457,10 @@ class MCTSAgent:
         
         weapon_value = game_state.equipped_weapon.value if game_state.equipped_weapon else 0
         
-        state_tuple = (game_state.health, weapon_value, room_tuple, dungeon_tuple)
+        # Include last_used_card in hash since it affects score (bonus points)
+        last_card_int = card_to_int(game_state.last_used_card) if game_state.last_used_card else 0
+        
+        state_tuple = (game_state.health, weapon_value, room_tuple, dungeon_tuple, last_card_int)
         return hash(state_tuple)
     
     def _get_valid_actions(self, game_state: GameState) -> List[int]:

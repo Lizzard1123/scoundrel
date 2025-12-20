@@ -24,27 +24,38 @@ class GameState:
     number_avoided: int = 0
     last_room_avoided: bool = False
     exit: bool = False
+    last_used_card: Optional[Card] = None
 
     @property
     def score(self) -> int:
+        """
+        Calculate the game score based on current state.
+        Score is calculated after moves are executed, so all state is up-to-date.
+        """
+        # Exit penalty
         if self.exit:
             return -300
-        score_val = 0
+        
+        # Calculate remaining monster value (for penalty calculation)
+        remaining_monsters = [
+            c for c in self.dungeon + self.room if c.type == CardType.MONSTER
+        ]
+        remaining_monster_value = sum(m.value for m in remaining_monsters)
+        
+        # Death: negative score based on health and remaining monsters
         if self.health <= 0:
-            remaining_monsters = [
-                c
-                for c in self.dungeon + self.room
-                if c.type == CardType.MONSTER
-            ]
-            score_val = self.health - sum(m.value for m in remaining_monsters)
-        else:
-            last_potion = next(
-                (c for c in reversed(self.discard) if c.type == CardType.POTION), None
-            )
-            score_val = self.health
-            if self.health == 20 and last_potion:
-                score_val += last_potion.value
-        return score_val
+            return self.health - remaining_monster_value
+        
+        # Victory: cleared entire dungeon
+        if len(self.dungeon) == 0 and len(self.room) == 0:
+            score = self.health
+            # Bonus points: full health (20) and last card used was a potion
+            if self.health == 20 and self.last_used_card and self.last_used_card.type == CardType.POTION:
+                score += self.last_used_card.value
+            return score
+        
+        # Intermediate state: penalty for remaining monsters
+        return self.health - remaining_monster_value
 
     @property
     def can_avoid(self) -> bool:
@@ -83,5 +94,6 @@ class GameState:
             health=self.health,
             number_avoided=self.number_avoided,
             last_room_avoided=self.last_room_avoided,
-            exit=self.exit
+            exit=self.exit,
+            last_used_card=self.last_used_card  # Card is immutable, reference is fine
         )

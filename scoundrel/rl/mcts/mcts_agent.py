@@ -632,22 +632,24 @@ class MCTSAgent:
     def _determinize_state(self, game_state: GameState) -> GameState:
         """
         Apply determinization to handle hidden information.
-        Shuffles unknown cards in the dungeon while keeping known cards in place.
+        Shuffles unknown cards in the dungeon while keeping known cards in place
         """
         if game_state.number_avoided == 0 or not game_state.dungeon:
             return game_state.copy()
         
         determinized_state = game_state.copy()
         
-        unknown_count = determinized_state.number_avoided * 4
+        # Known cards = avoided rooms * 4 cards per room (at BACK of dungeon)
+        known_count = determinized_state.number_avoided * 4
         
-        if unknown_count < len(determinized_state.dungeon):
-            unknown_cards = determinized_state.dungeon[:unknown_count]
+        if known_count < len(determinized_state.dungeon):
+            # Shuffle unknown cards at front, keep known cards at back fixed
+            unknown_cards = determinized_state.dungeon[:-known_count]
+            known_cards = determinized_state.dungeon[-known_count:]
             random.shuffle(unknown_cards)
             
-            determinized_state.dungeon = unknown_cards + determinized_state.dungeon[unknown_count:]
-        else:
-            random.shuffle(determinized_state.dungeon)
+            determinized_state.dungeon = unknown_cards + known_cards
+        # else: all cards are known (avoided), don't shuffle
         
         return determinized_state
 

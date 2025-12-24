@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 
 def get_default_collection_dir() -> Path:
     """Get the default directory for collected games."""
@@ -96,6 +99,77 @@ def load_game_data(filepath: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
+def create_bar_graphs(
+    scores: List[int],
+    game_lengths: List[int],
+    output_dir: Path,
+) -> None:
+    """
+    Create frequency distribution bar charts for game scores and game lengths.
+    
+    Args:
+        scores: List of game scores
+        game_lengths: List of game lengths (number of turns)
+        output_dir: Directory to save the graphs
+    """
+    if not scores or not game_lengths:
+        print("Warning: No data to plot")
+        return
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    fig.suptitle('MCTS Collection Evaluation - Frequency Distributions', fontsize=16, fontweight='bold')
+    
+    # Game Scores frequency distribution
+    # Create bins for scores
+    min_score = min(scores)
+    max_score = max(scores)
+    # Use integer bins, ensuring we cover the full range
+    bins_scores = np.arange(min_score - 0.5, max_score + 1.5, 1)
+    counts_scores, bins_scores = np.histogram(scores, bins=bins_scores)
+    bin_centers_scores = (bins_scores[:-1] + bins_scores[1:]) / 2
+    
+    ax1.bar(bin_centers_scores, counts_scores, width=0.8, color='steelblue', alpha=0.7, edgecolor='black', linewidth=0.5)
+    ax1.set_xlabel('Game Score', fontsize=12)
+    ax1.set_ylabel('Frequency', fontsize=12)
+    ax1.set_title('Game Score Distribution', fontsize=14, fontweight='bold')
+    ax1.grid(axis='y', alpha=0.3, linestyle='--')
+    ax1.axvline(x=0, color='red', linestyle='-', linewidth=1, alpha=0.5)
+    
+    # Add average line
+    avg_score = np.mean(scores)
+    ax1.axvline(x=avg_score, color='green', linestyle='--', linewidth=2, 
+               alpha=0.7, label=f'Average: {avg_score:.1f}')
+    ax1.legend()
+    
+    # Game Lengths frequency distribution
+    # Create bins for game lengths
+    min_length = min(game_lengths)
+    max_length = max(game_lengths)
+    # Use integer bins
+    bins_lengths = np.arange(min_length - 0.5, max_length + 1.5, 1)
+    counts_lengths, bins_lengths = np.histogram(game_lengths, bins=bins_lengths)
+    bin_centers_lengths = (bins_lengths[:-1] + bins_lengths[1:]) / 2
+    
+    ax2.bar(bin_centers_lengths, counts_lengths, width=0.8, color='coral', alpha=0.7, edgecolor='black', linewidth=0.5)
+    ax2.set_xlabel('Game Length (Turns)', fontsize=12)
+    ax2.set_ylabel('Frequency', fontsize=12)
+    ax2.set_title('Game Length Distribution', fontsize=14, fontweight='bold')
+    ax2.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Add average line
+    avg_length = np.mean(game_lengths)
+    ax2.axvline(x=avg_length, color='green', linestyle='--', linewidth=2,
+                alpha=0.7, label=f'Average: {avg_length:.1f}')
+    ax2.legend()
+    
+    plt.tight_layout()
+    
+    # Display the figure (persists until user closes)
+    plt.show()
+
+
 def evaluate_collection(collection_dir: Optional[Path] = None, verbose: bool = False) -> Dict[str, Any]:
     """
     Evaluate all collected games in a directory.
@@ -139,6 +213,7 @@ def evaluate_collection(collection_dir: Optional[Path] = None, verbose: bool = F
     
     # Load and process all games
     scores = []
+    game_lengths = []
     total_turns = 0
     loaded_games = 0
     failed_games = 0
@@ -161,6 +236,7 @@ def evaluate_collection(collection_dir: Optional[Path] = None, verbose: bool = F
         num_turns = metadata.get("num_turns", 0)
         
         scores.append(score)
+        game_lengths.append(num_turns)
         total_turns += num_turns
         loaded_games += 1
         
@@ -178,6 +254,9 @@ def evaluate_collection(collection_dir: Optional[Path] = None, verbose: bool = F
     results = calculate_statistics(scores, total_turns, loaded_games)
     results["failed_games"] = failed_games
     results["collection_dir"] = str(collection_dir)
+    
+    # Create bar graphs
+    create_bar_graphs(scores, game_lengths, collection_dir)
     
     # Print results
     print_statistics(

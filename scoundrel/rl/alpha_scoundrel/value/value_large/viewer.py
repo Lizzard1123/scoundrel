@@ -1,15 +1,14 @@
 import argparse
 from pathlib import Path
-from typing import Any
-
 import torch
 
-from scoundrel.game.game_manager import GameManager
-from scoundrel.models.game_state import Action, GameState
+from scoundrel.models.game_state import GameState
+from scoundrel.rl.viewer import run_state_viewer
 from scoundrel.rl.alpha_scoundrel.value.value_large.network import ValueLargeNet
 from scoundrel.rl.alpha_scoundrel.value.value_large.constants import STACK_SEQ_LEN
+from scoundrel.rl.alpha_scoundrel.value.value_large.data_loader import compute_unknown_stats
 from scoundrel.rl.translator import ScoundrelTranslator
-from scoundrel.rl.viewer import run_interactive_viewer
+from scoundrel.game.game_manager import GameManager
 
 
 def _load_model(checkpoint_path: Path, scalar_input_dim: int) -> ValueLargeNet:
@@ -35,41 +34,58 @@ def _load_model(checkpoint_path: Path, scalar_input_dim: int) -> ValueLargeNet:
     return model
 
 
-def _get_value_prediction(model: ValueLargeNet, translator: ScoundrelTranslator, state: GameState):
+def _get_colored_score_text(state: GameState) -> str:
     """
-    Get value prediction from model.
+    Get colored score text based on game state.
     
     Args:
-        model: Trained ValueLargeNet model
-        translator: ScoundrelTranslator for encoding states
         state: Current game state
         
     Returns:
-        Tuple of (action_enum, value_prediction)
+        Colored score string
     """
-    s_scal, s_seq = translator.encode_state(state)
-    mask = translator.get_action_mask(state)
-
-    with torch.no_grad():
-        value_pred = model(s_scal, s_seq)
-        value = float(value_pred.squeeze().item())
-
-    # For value network viewer, we'll use a simple greedy policy based on value estimates
-    # This is a placeholder - in practice, you'd want to evaluate each action's value
-    # For now, we'll just return a random valid action
-    valid_actions = [i for i in range(5) if mask[i]]
-    if valid_actions:
-        action_idx = valid_actions[0]  # Simple: take first valid action
-    else:
-        action_idx = 0
+    score = state.score
     
-    action_enum = translator.decode_action(action_idx)
-    return action_enum, value
+    # Determine color based on state
+    if state.exit:
+        color = "yellow"
+    elif state.lost:
+        color = "red"
+    elif score > 0:
+        color = "green"
+    elif score == 0:
+        color = "yellow"
+    else:
+        color = "red"
+    
+    return f"[{color}]{score:+d}[/{color}]"
+
+
+def _get_colored_predicted_text(predicted_value: float) -> str:
+    """
+    Get colored text for predicted value.
+    
+    Args:
+        predicted_value: Predicted final score
+        
+    Returns:
+        Colored predicted value string
+    """
+    # Determine color based on predicted value
+    if predicted_value > 0:
+        color = "green"
+    elif predicted_value == 0:
+        color = "yellow"
+    else:
+        color = "red"
+    
+    return f"[{color}]{predicted_value:+.1f}[/{color}]"
 
 
 def run_viewer(checkpoint: Path, label: str, seed: int = None):
     """
-    Run interactive viewer for trained Value Large model.
+    Run interactive viewer for Value Large model.
+    Shows game state with current score and predicted final score in title.
     
     Args:
         checkpoint: Path to checkpoint file
@@ -78,6 +94,7 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
     """
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
     
+    # Initialize model
     temp_engine = GameManager(seed=seed)
     init_state = temp_engine.restart()
     s_scal, _ = translator.encode_state(init_state)
@@ -88,16 +105,39 @@ def run_viewer(checkpoint: Path, label: str, seed: int = None):
         scalar_input_dim = checkpoint_data['scalar_input_dim']
     
     model = _load_model(checkpoint, scalar_input_dim=scalar_input_dim)
+    device = torch.device("cpu")  # Use CPU for inference
     
-    def get_value_action(state: GameState) -> tuple[Action, Any]:
-        """Get action and value prediction."""
-        return _get_value_prediction(model, translator, state)
+    def get_title_fn(state: GameState) -> str:
+        """Get dynamic title with current score and predicted value."""
+        base_title = f"{label}"
+        if checkpoint.name:
+            base_title += f" — {checkpoint.name}"
+        
+        # Get current score
+        score_text = _get_colored_score_text(state)
+        
+        # Get predicted value
+        with torch.no_grad():
+            scalar_features, sequence_features = translator.encode_state(state)
+            unknown_stats = compute_unknown_stats(state)
+            
+            # Add batch dimension
+            scalar_features = scalar_features.to(device)
+            sequence_features = sequence_features.to(device)
+            unknown_stats = unknown_stats.unsqueeze(0).to(device)
+            
+            predicted_value = model(scalar_features, sequence_features, unknown_stats)
+            predicted_value = predicted_value.item()
+        
+        predicted_text = _get_colored_predicted_text(predicted_value)
+        
+        return f"{base_title} | Score: {score_text} | Predicted: {predicted_text}"
     
-    run_interactive_viewer(
-        get_action_fn=get_value_action,
+    run_state_viewer(
         label=label,
         checkpoint_name=checkpoint.name,
         seed=seed,
+        get_title_fn=get_title_fn,
     )
 
 
@@ -139,4 +179,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

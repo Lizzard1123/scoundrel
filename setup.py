@@ -4,6 +4,7 @@ setup(
     name="scoundrel",
     version="0.1.0",
     packages=find_packages(),
+    py_modules=['main'],
     install_requires=[
         "rich>=13.0.0",
     ],

@@ -4,15 +4,51 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 from torch.utils.data import Dataset, DataLoader
 
+from scoundrel.models.card import CardType
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import get_pin_memory
 from scoundrel.rl.alpha_scoundrel.data_utils import deserialize_game_state
+
+
+def compute_unknown_stats(game_state) -> torch.Tensor:
+    """
+    Compute aggregate statistics for unknown cards in dungeon.
+    
+    Unknown cards are the ones at the front of the dungeon that haven't
+    been seen yet (before the avoided cards that went to the back).
+    
+    Args:
+        game_state: GameState object
+        
+    Returns:
+        Tensor [3] of [potion_sum, weapon_sum, monster_sum] normalized
+    """
+    unknown_count = game_state.number_avoided * 4
+    unknown_cards = game_state.dungeon[:unknown_count]
+    
+    potion_sum = sum(c.value for c in unknown_cards if c.type == CardType.POTION)
+    weapon_sum = sum(c.value for c in unknown_cards if c.type == CardType.WEAPON)
+    monster_sum = sum(c.value for c in unknown_cards if c.type == CardType.MONSTER)
+    
+    # Normalize by reasonable max values
+    # Max possible: all 9 potions (2-10) = 54, all 13 weapons (2-14) = 104, all 26 monsters = 208
+    return torch.tensor([
+        potion_sum / 100.0,
+        weapon_sum / 150.0,
+        monster_sum / 250.0
+    ], dtype=torch.float32)
 
 
 class MCTSValueDataset(Dataset):
     """
     Dataset for loading MCTS log files and converting to value training samples.
     Uses the final score of each game as the label for all states in that game.
+    
+    Each sample contains:
+    - scalar_features: Room cards and player status
+    - sequence_features: Card IDs in dungeon (0 = unknown, non-zero = known)
+    - unknown_stats: Aggregate stats for unknown cards [potion_sum, weapon_sum, monster_sum]
+    - target_value: Final game score
     """
     
     def __init__(
@@ -29,7 +65,7 @@ class MCTSValueDataset(Dataset):
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
-        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
         
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
@@ -37,7 +73,6 @@ class MCTSValueDataset(Dataset):
         
         print(f"Loading {len(log_files)} game log files...")
         
-        import json
         for log_file in log_files:
             try:
                 with open(log_file, 'r') as f:
@@ -55,12 +90,17 @@ class MCTSValueDataset(Dataset):
                     try:
                         game_state_dict = event.get("game_state", {})
                         game_state = deserialize_game_state(game_state_dict)
+                        
+                        # Encode state using translator
                         scalar_features, sequence_features = translator.encode_state(game_state)
                         
-                        # Use final_score as label for all states in the game
+                        # Compute unknown card statistics
+                        unknown_stats = compute_unknown_stats(game_state)
+                        
                         self.samples.append((
                             scalar_features.squeeze(0),
                             sequence_features.squeeze(0),
+                            unknown_stats,
                             target_value
                         ))
                     except Exception as e:
@@ -77,8 +117,8 @@ class MCTSValueDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        scalar_features, sequence_features, target_value = self.samples[idx]
-        return scalar_features, sequence_features, target_value
+        scalar_features, sequence_features, unknown_stats, target_value = self.samples[idx]
+        return scalar_features, sequence_features, unknown_stats, target_value
 
 
 def create_dataloaders(
@@ -131,4 +171,3 @@ def create_dataloaders(
     )
     
     return train_loader, val_loader
-

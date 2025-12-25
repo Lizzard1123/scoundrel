@@ -125,11 +125,12 @@ def train_epoch(
     
     epoch_start_time = time.time()
     
-    for batch_idx, (scalar_features, sequence_features, target_values) in enumerate(train_loader):
+    for batch_idx, (scalar_features, sequence_features, unknown_stats, target_values) in enumerate(train_loader):
         batch_start_time = time.time()
         
         scalar_features = scalar_features.to(device)
         sequence_features = sequence_features.to(device)
+        unknown_stats = unknown_stats.to(device)
         target_values = target_values.to(device)
         
         # Check for NaN/inf in inputs
@@ -139,11 +140,14 @@ def train_epoch(
         if torch.isnan(sequence_features).any() or torch.isinf(sequence_features).any():
             print(f"Warning: NaN/inf detected in sequence_features at batch {batch_idx}")
             continue
+        if torch.isnan(unknown_stats).any() or torch.isinf(unknown_stats).any():
+            print(f"Warning: NaN/inf detected in unknown_stats at batch {batch_idx}")
+            continue
         if torch.isnan(target_values).any() or torch.isinf(target_values).any():
             print(f"Warning: NaN/inf detected in target_values at batch {batch_idx}")
             continue
         
-        pred_values = model(scalar_features, sequence_features)
+        pred_values = model(scalar_features, sequence_features, unknown_stats)
         
         # Check for NaN/inf in predictions
         if torch.isnan(pred_values).any() or torch.isinf(pred_values).any():
@@ -202,12 +206,13 @@ def train_epoch(
     model.eval()
     epoch_metrics = {'mse': 0.0, 'mae': 0.0, 'rmse': 0.0, 'mean_error': 0.0}
     with torch.no_grad():
-        for scalar_features, sequence_features, target_values in train_loader:
+        for scalar_features, sequence_features, unknown_stats, target_values in train_loader:
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
+            unknown_stats = unknown_stats.to(device)
             target_values = target_values.to(device)
             
-            pred_values = model(scalar_features, sequence_features)
+            pred_values = model(scalar_features, sequence_features, unknown_stats)
             metrics = compute_value_metrics(pred_values, target_values)
             
             batch_size = scalar_features.size(0)
@@ -262,12 +267,13 @@ def validate(
     all_metrics = {'mse': 0.0, 'mae': 0.0, 'rmse': 0.0, 'mean_error': 0.0}
     
     with torch.no_grad():
-        for batch_idx, (scalar_features, sequence_features, target_values) in enumerate(val_loader):
+        for batch_idx, (scalar_features, sequence_features, unknown_stats, target_values) in enumerate(val_loader):
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
+            unknown_stats = unknown_stats.to(device)
             target_values = target_values.to(device)
             
-            pred_values = model(scalar_features, sequence_features)
+            pred_values = model(scalar_features, sequence_features, unknown_stats)
             loss = F.mse_loss(pred_values.squeeze(-1), target_values)
             
             metrics = compute_value_metrics(
@@ -380,8 +386,9 @@ def train(
         
         dummy_scalar_tensor = dummy_scalar.to(device)
         dummy_seq_tensor = torch.zeros((1, STACK_SEQ_LEN), dtype=torch.long).to(device)
+        dummy_unknown_stats = torch.zeros((1, 3), dtype=torch.float32).to(device)
         try:
-            writer.add_graph(model, (dummy_scalar_tensor, dummy_seq_tensor))
+            writer.add_graph(model, (dummy_scalar_tensor, dummy_seq_tensor, dummy_unknown_stats))
         except Exception as e:
             print(f"Warning: Could not log model graph: {e}")
     
@@ -510,4 +517,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

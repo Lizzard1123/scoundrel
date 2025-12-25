@@ -103,13 +103,20 @@ def compute_metrics(
         'mse': mse.item(),
     }
     
+    # Always compute per-action metrics (needed for validation accumulation)
+    for action_idx in range(5):
+        pred_mean = pred_probs[:, action_idx].mean().item()
+        target_mean = target_probs[:, action_idx].mean().item()
+        # Use keys without prefix for accumulation (prefix is only for TensorBoard logging)
+        metrics[f'prob_action_{action_idx}_pred'] = pred_mean
+        metrics[f'prob_action_{action_idx}_target'] = target_mean
+    
+    # Log to TensorBoard if writer is provided
     if writer is not None and global_step is not None:
         for action_idx in range(5):
             action_name = f"action_{action_idx}" if action_idx < 4 else "action_avoid"
-            pred_mean = pred_probs[:, action_idx].mean().item()
-            target_mean = target_probs[:, action_idx].mean().item()
-            metrics[f'{prefix}prob_{action_name}_pred'] = pred_mean
-            metrics[f'{prefix}prob_{action_name}_target'] = target_mean
+            pred_mean = metrics[f'prob_action_{action_idx}_pred']
+            target_mean = metrics[f'prob_action_{action_idx}_target']
             
             writer.add_scalar(f'{prefix}Probabilities/{action_name}_pred', pred_mean, global_step)
             writer.add_scalar(f'{prefix}Probabilities/{action_name}_target', target_mean, global_step)

@@ -4,12 +4,42 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 from torch.utils.data import Dataset, DataLoader
 
+from scoundrel.models.card import CardType
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import get_pin_memory
 from scoundrel.rl.alpha_scoundrel.data_utils import (
     deserialize_game_state,
     visits_to_distribution,
 )
+
+
+def compute_unknown_stats(game_state) -> torch.Tensor:
+    """
+    Compute aggregate statistics for unknown cards in dungeon.
+    
+    Unknown cards are the ones at the front of the dungeon that haven't
+    been seen yet (before the avoided cards that went to the back).
+    
+    Args:
+        game_state: GameState object
+        
+    Returns:
+        Tensor [3] of [potion_sum, weapon_sum, monster_sum] normalized
+    """
+    unknown_count = game_state.number_avoided * 4
+    unknown_cards = game_state.dungeon[:unknown_count]
+    
+    potion_sum = sum(c.value for c in unknown_cards if c.type == CardType.POTION)
+    weapon_sum = sum(c.value for c in unknown_cards if c.type == CardType.WEAPON)
+    monster_sum = sum(c.value for c in unknown_cards if c.type == CardType.MONSTER)
+    
+    # Normalize by reasonable max values
+    # Max possible: all 9 potions (2-10) = 54, all 13 weapons (2-14) = 104, all 26 monsters = 208
+    return torch.tensor([
+        potion_sum / 100.0,
+        weapon_sum / 150.0,
+        monster_sum / 250.0
+    ], dtype=torch.float32)
 
 
 class MCTSDataset(Dataset):
@@ -31,7 +61,7 @@ class MCTSDataset(Dataset):
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
-        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
         
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
@@ -39,7 +69,6 @@ class MCTSDataset(Dataset):
         
         print(f"Loading {len(log_files)} game log files...")
         
-        import json
         for log_file in log_files:
             try:
                 with open(log_file, 'r') as f:
@@ -55,9 +84,13 @@ class MCTSDataset(Dataset):
                         mcts_stats = event.get("mcts_stats", [])
                         target_probs = visits_to_distribution(mcts_stats, action_mask)
                         
+                        # Compute unknown card statistics
+                        unknown_stats = compute_unknown_stats(game_state)
+                        
                         self.samples.append((
                             scalar_features.squeeze(0),
                             sequence_features.squeeze(0),
+                            unknown_stats,
                             target_probs,
                             action_mask
                         ))
@@ -75,8 +108,8 @@ class MCTSDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        scalar_features, sequence_features, target_probs, action_mask = self.samples[idx]
-        return scalar_features, sequence_features, target_probs, action_mask
+        scalar_features, sequence_features, unknown_stats, target_probs, action_mask = self.samples[idx]
+        return scalar_features, sequence_features, unknown_stats, target_probs, action_mask
 
 
 def create_dataloaders(
@@ -102,6 +135,12 @@ def create_dataloaders(
         Tuple of (train_loader, val_loader)
     """
     full_dataset = MCTSDataset(log_dir, translator, max_games=max_games)
+    
+    if len(full_dataset) == 0:
+        raise ValueError(
+            f"No training samples found in {log_dir}. "
+            f"Please ensure the directory contains MCTS log JSON files."
+        )
     
     train_size = int(train_val_split * len(full_dataset))
     val_size = len(full_dataset) - train_size

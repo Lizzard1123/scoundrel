@@ -2,20 +2,22 @@ STACK_SEQ_LEN = 40
 NUM_CARDS = 45
 ACTION_SPACE = 5
 
-CARD_EMBEDDING_DIM = 64
-TRANSFORMER_NHEAD = 8
-TRANSFORMER_NLAYERS = 4
-SCALAR_ENCODER_OUT = 64
-HIDDEN_DIM = 256
+# Network architecture
+EMBED_DIM = 32          # Card and position embedding dimension
+HIDDEN_DIM = 256        # Hidden layer dimension in policy head
 
+# Training hyperparameters
 LR = 5e-4
 BATCH_SIZE = 128
 EPOCHS = 100
 TRAIN_VAL_SPLIT = 0.9
+MAX_GRAD_NORM = 1.0     # Maximum gradient norm for clipping
 
+# Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"
 MAX_GAMES = None
 
+# Checkpointing
 CHECKPOINT_DIR = "checkpoints"
 CHECKPOINT_PREFIX = "policy_large_epoch_"
 CHECKPOINT_INTERVAL = 10

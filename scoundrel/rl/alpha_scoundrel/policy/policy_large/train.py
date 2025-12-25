@@ -57,15 +57,16 @@ def train_epoch(
     
     epoch_start_time = time.time()
     
-    for batch_idx, (scalar_features, sequence_features, target_probs, action_mask) in enumerate(train_loader):
+    for batch_idx, (scalar_features, sequence_features, unknown_stats, target_probs, action_mask) in enumerate(train_loader):
         batch_start_time = time.time()
         
         scalar_features = scalar_features.to(device)
         sequence_features = sequence_features.to(device)
+        unknown_stats = unknown_stats.to(device)
         target_probs = target_probs.to(device)
         action_mask = action_mask.to(device)
         
-        logits = model(scalar_features, sequence_features)
+        logits = model(scalar_features, sequence_features, unknown_stats)
         loss = compute_loss(logits, target_probs, action_mask)
         
         optimizer.zero_grad()
@@ -96,25 +97,45 @@ def train_epoch(
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     samples_per_sec = total_samples / epoch_time if epoch_time > 0 else 0.0
     
-    # Compute epoch-level accuracy
+    # Compute epoch-level metrics for consistency with validation
     model.eval()
     epoch_accuracy = 0.0
+    epoch_kl_div = 0.0
+    epoch_mse = 0.0
+    epoch_per_action = {f'prob_action_{i}_pred': 0.0 for i in range(5)}
+    epoch_per_action.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
+    
     with torch.no_grad():
-        for scalar_features, sequence_features, target_probs, action_mask in train_loader:
+        for scalar_features, sequence_features, unknown_stats, target_probs, action_mask in train_loader:
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
+            unknown_stats = unknown_stats.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, sequence_features)
-            metrics = compute_metrics(logits, target_probs, action_mask)
-            epoch_accuracy += metrics['accuracy'] * scalar_features.size(0)
+            logits = model(scalar_features, sequence_features, unknown_stats)
+            batch_metrics = compute_metrics(logits, target_probs, action_mask)
+            batch_size = scalar_features.size(0)
+            
+            epoch_accuracy += batch_metrics['accuracy'] * batch_size
+            epoch_kl_div += batch_metrics['kl_div'] * batch_size
+            epoch_mse += batch_metrics['mse'] * batch_size
+            
+            for key in epoch_per_action:
+                if key in batch_metrics:
+                    epoch_per_action[key] += batch_metrics[key] * batch_size
+    
     epoch_accuracy = epoch_accuracy / total_samples if total_samples > 0 else 0.0
+    epoch_kl_div = epoch_kl_div / total_samples if total_samples > 0 else 0.0
+    epoch_mse = epoch_mse / total_samples if total_samples > 0 else 0.0
+    avg_epoch_per_action = {k: v / total_samples if total_samples > 0 else 0.0 for k, v in epoch_per_action.items()}
     model.train()
     
     metrics = {
         'loss': avg_loss,
         'accuracy': epoch_accuracy,
+        'kl_div': epoch_kl_div,
+        'mse': epoch_mse,
         'samples_per_sec': samples_per_sec,
         'epoch_time': epoch_time,
     }
@@ -122,8 +143,24 @@ def train_epoch(
     if writer is not None:
         writer.add_scalar('Train/EpochLoss', avg_loss, epoch)
         writer.add_scalar('Train/EpochAccuracy', epoch_accuracy, epoch)
+        writer.add_scalar('Train/EpochKL_Div', epoch_kl_div, epoch)
+        writer.add_scalar('Train/EpochMSE', epoch_mse, epoch)
         writer.add_scalar('Train/SamplesPerSec', samples_per_sec, epoch)
         writer.add_scalar('Train/EpochTime', epoch_time, epoch)
+        
+        # Log epoch-level Train/Probabilities metrics for consistency with validation
+        for action_idx in range(5):
+            action_name = f"action_{action_idx}" if action_idx < 4 else "action_avoid"
+            pred_key = f'prob_action_{action_idx}_pred'
+            target_key = f'prob_action_{action_idx}_target'
+            if pred_key in avg_epoch_per_action:
+                writer.add_scalar(f'Train/Probabilities/{action_name}_pred', avg_epoch_per_action[pred_key], epoch)
+                writer.add_scalar(f'Train/Probabilities/{action_name}_target', avg_epoch_per_action[target_key], epoch)
+                writer.add_scalar(
+                    f'Train/Probabilities/{action_name}_error',
+                    abs(avg_epoch_per_action[pred_key] - avg_epoch_per_action[target_key]),
+                    epoch
+                )
     
     return metrics
 
@@ -157,13 +194,14 @@ def validate(
     per_action_metrics.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
     with torch.no_grad():
-        for batch_idx, (scalar_features, sequence_features, target_probs, action_mask) in enumerate(val_loader):
+        for batch_idx, (scalar_features, sequence_features, unknown_stats, target_probs, action_mask) in enumerate(val_loader):
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
+            unknown_stats = unknown_stats.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, sequence_features)
+            logits = model(scalar_features, sequence_features, unknown_stats)
             loss = compute_loss(logits, target_probs, action_mask)
             
             metrics = compute_metrics(
@@ -264,7 +302,7 @@ def train(
                 'train_val_split': train_val_split,
                 'max_games': max_games if max_games else -1,
             },
-            {            }
+            {}
         )
     
     translator = ScoundrelTranslator(stack_seq_len=STACK_SEQ_LEN)
@@ -295,8 +333,9 @@ def train(
         
         dummy_scalar_tensor = dummy_scalar.to(device)
         dummy_seq_tensor = torch.zeros((1, STACK_SEQ_LEN), dtype=torch.long).to(device)
+        dummy_unknown_stats = torch.zeros((1, 3), dtype=torch.float32).to(device)
         try:
-            writer.add_graph(model, (dummy_scalar_tensor, dummy_seq_tensor))
+            writer.add_graph(model, (dummy_scalar_tensor, dummy_seq_tensor, dummy_unknown_stats))
         except Exception as e:
             print(f"Warning: Could not log model graph: {e}")
     

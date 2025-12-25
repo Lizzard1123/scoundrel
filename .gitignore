@@ -2,8 +2,7 @@
 **/__pycache__/*
 **/build/*
 .DS_Store
-scoundrel/rl/transformer_mlp/logs/*
-scoundrel/rl/transformer_mlp/checkpoints/*
-scoundrel/rl/transformer_mlp/runs/*
-scoundrel/rl/transformer_mlp/checkpoints_backup/*
-scoundrel/rl/mcts/logs/*
+scoundrel/rl/**/logs/*
+scoundrel/rl/**/checkpoints/*
+scoundrel/rl/**/runs/*
+scoundrel/rl/**/checkpoints_backup/*

@@ -92,9 +92,16 @@ def compute_metrics(
     kl_div = torch.where(torch.isfinite(kl_div), kl_div, torch.zeros_like(kl_div))
     kl_div = kl_div.mean()
     
-    pred_actions = torch.argmax(pred_probs, dim=-1)
-    target_actions = torch.argmax(target_probs, dim=-1)
-    accuracy = (pred_actions == target_actions).float().mean()
+    # Compute accuracy with tie-aware handling
+    # If multiple actions have equal max probability in target, any of them is correct
+    pred_actions = torch.argmax(pred_probs, dim=-1)  # [batch_size]
+    target_max_probs = target_probs.max(dim=-1)[0]  # [batch_size]
+    # Find all actions that have the max probability (handles ties)
+    target_max_mask = (target_probs == target_max_probs.unsqueeze(-1))  # [batch_size, 5]
+    # Check if predicted action is among the tied max actions
+    # Use gather to check if pred_actions index has max probability
+    accuracy = target_max_mask.gather(1, pred_actions.unsqueeze(-1)).squeeze(-1).float().mean()
+    
     mse = F.mse_loss(pred_probs, target_probs)
     
     metrics = {

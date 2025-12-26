@@ -3,13 +3,13 @@ NUM_CARDS = 45
 ACTION_SPACE = 5
 
 # Network architecture
-EMBED_DIM = 32          # Card and position embedding dimension
-HIDDEN_DIM = 256        # Hidden layer dimension in policy head
+EMBED_DIM = 64         # Card and position embedding dimension
+HIDDEN_DIM = 512        # Hidden layer dimension in policy head
 
 # Training hyperparameters
-LR = 5e-4
-BATCH_SIZE = 128
-EPOCHS = 100
+LR = 1e-3
+BATCH_SIZE = 256
+EPOCHS = 1000
 TRAIN_VAL_SPLIT = 0.9
 MAX_GRAD_NORM = 1.0     # Maximum gradient norm for clipping
 

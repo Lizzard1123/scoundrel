@@ -26,19 +26,34 @@ class PolicyLargeNet(nn.Module):
     different from monster-14 in 10 turns.
     """
     
-    def __init__(self, scalar_input_dim: int):
+    def __init__(
+        self, 
+        scalar_input_dim: int,
+        embed_dim: int = None,
+        hidden_dim: int = None,
+        action_space: int = None,
+        num_cards: int = None,
+        stack_seq_len: int = None
+    ):
         super(PolicyLargeNet, self).__init__()
         
+        # Use provided constants or fall back to defaults
+        embed_dim = embed_dim if embed_dim is not None else EMBED_DIM
+        hidden_dim = hidden_dim if hidden_dim is not None else HIDDEN_DIM
+        action_space = action_space if action_space is not None else ACTION_SPACE
+        num_cards = num_cards if num_cards is not None else NUM_CARDS
+        stack_seq_len = stack_seq_len if stack_seq_len is not None else STACK_SEQ_LEN
+        
         # Card embedding (0 = unknown/padding)
-        self.card_embed = nn.Embedding(NUM_CARDS, EMBED_DIM, padding_idx=0)
+        self.card_embed = nn.Embedding(num_cards, embed_dim, padding_idx=0)
         
         # Positional embedding: encodes "how many draws until this card appears"
         # Position 0 = next card drawn, position 39 = last card in deck
-        self.pos_embed = nn.Embedding(STACK_SEQ_LEN, EMBED_DIM)
+        self.pos_embed = nn.Embedding(stack_seq_len, embed_dim)
         
         # Per-card encoder: transforms (card_embed + pos_embed) -> features
         self.card_encoder = nn.Sequential(
-            nn.Linear(EMBED_DIM, 64),
+            nn.Linear(embed_dim, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
         )
@@ -59,12 +74,12 @@ class PolicyLargeNet(nn.Module):
         # Final policy head
         # 64 (known cards) + 32 (unknown stats) + 64 (scalar) = 160
         self.policy_head = nn.Sequential(
-            nn.Linear(160, HIDDEN_DIM),
+            nn.Linear(160, hidden_dim),
             nn.ReLU(),
-            nn.LayerNorm(HIDDEN_DIM),
-            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(HIDDEN_DIM, ACTION_SPACE),
+            nn.Linear(hidden_dim, action_space),
         )
 
     def forward(self, scalar_data, sequence_data, unknown_stats):

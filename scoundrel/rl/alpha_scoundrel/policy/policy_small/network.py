@@ -22,15 +22,26 @@ class PolicySmallNet(nn.Module):
                   weapon, and monsters sums from dungeon stack
     """
     
-    def __init__(self, scalar_input_dim: int):
+    def __init__(
+        self, 
+        scalar_input_dim: int,
+        scalar_encoder_out: int = None,
+        hidden_dim: int = None,
+        action_space: int = None
+    ):
         super(PolicySmallNet, self).__init__()
+        
+        # Use provided constants or fall back to defaults
+        scalar_encoder_out = scalar_encoder_out if scalar_encoder_out is not None else SCALAR_ENCODER_OUT
+        hidden_dim = hidden_dim if hidden_dim is not None else HIDDEN_DIM
+        action_space = action_space if action_space is not None else ACTION_SPACE
         
         # Input dimension: scalar_features + stack_sums (3 values)
         combined_input_dim = scalar_input_dim + 3
         
-        self.scalar_fc = nn.Linear(combined_input_dim, SCALAR_ENCODER_OUT)
-        self.shared_layer = nn.Linear(SCALAR_ENCODER_OUT, HIDDEN_DIM)
-        self.action_head = nn.Linear(HIDDEN_DIM, ACTION_SPACE)
+        self.scalar_fc = nn.Linear(combined_input_dim, scalar_encoder_out)
+        self.shared_layer = nn.Linear(scalar_encoder_out, hidden_dim)
+        self.action_head = nn.Linear(hidden_dim, action_space)
 
     def forward(self, scalar_data: torch.Tensor, stack_sums: torch.Tensor):
         """

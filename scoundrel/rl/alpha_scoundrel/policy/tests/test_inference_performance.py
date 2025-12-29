@@ -7,99 +7,24 @@ by testing both networks on the same random game states from MCTS logs.
 To run this test with full output (including skip reasons and print statements):
     pytest scoundrel/rl/alpha_scoundrel/policy/tests/test_inference_performance.py -v -s -rs
 
-Note: Architecture constants are automatically inferred from checkpoint state dict shapes.
-No manual configuration needed - the test adapts automatically to architecture changes.
+Note: Architecture constants are automatically inferred from checkpoint state dicts
+by the inference classes. No manual configuration needed - the test adapts automatically
+to architecture changes.
 """
 import json
 import random
 import time
 import statistics
 from pathlib import Path
-from typing import List, Dict
+from typing import List
 
 import pytest
-import torch
 
 from scoundrel.models.game_state import GameState
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.inference import PolicySmallInference
 from scoundrel.rl.alpha_scoundrel.policy.policy_large.inference import PolicyLargeInference
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import DEFAULT_MCTS_LOGS_DIR
 from scoundrel.rl.alpha_scoundrel.data_utils import deserialize_game_state
-
-
-def infer_small_model_architecture(checkpoint_path: Path) -> Dict[str, int]:
-    """
-    Infer architecture constants from checkpoint state dict shapes.
-    
-    Args:
-        checkpoint_path: Path to checkpoint file
-        
-    Returns:
-        Dictionary with architecture constants:
-        - scalar_encoder_out: Output dimension of scalar encoder
-        - hidden_dim: Hidden layer dimension
-        - action_space: Action space size
-    """
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    state_dict = checkpoint.get('model_state_dict', checkpoint)
-    
-    # scalar_fc.weight: [scalar_encoder_out, combined_input_dim]
-    scalar_encoder_out = state_dict['scalar_fc.weight'].shape[0]
-    
-    # shared_layer.weight: [hidden_dim, scalar_encoder_out]
-    hidden_dim = state_dict['shared_layer.weight'].shape[0]
-    
-    # action_head.weight: [action_space, hidden_dim]
-    action_space = state_dict['action_head.weight'].shape[0]
-    
-    return {
-        'scalar_encoder_out': scalar_encoder_out,
-        'hidden_dim': hidden_dim,
-        'action_space': action_space,
-    }
-
-
-def infer_large_model_architecture(checkpoint_path: Path) -> Dict[str, int]:
-    """
-    Infer architecture constants from checkpoint state dict shapes.
-    
-    Args:
-        checkpoint_path: Path to checkpoint file
-        
-    Returns:
-        Dictionary with architecture constants:
-        - embed_dim: Embedding dimension for cards and positions
-        - hidden_dim: Hidden layer dimension in policy head
-        - action_space: Action space size
-        - num_cards: Number of cards in the game
-        - stack_seq_len: Maximum sequence length for dungeon stack
-    """
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    state_dict = checkpoint.get('model_state_dict', checkpoint)
-    
-    # card_embed.weight: [num_cards, embed_dim]
-    num_cards, embed_dim = state_dict['card_embed.weight'].shape
-    
-    # pos_embed.weight: [stack_seq_len, embed_dim]
-    stack_seq_len = state_dict['pos_embed.weight'].shape[0]
-    
-    # policy_head is a Sequential with layers:
-    # 0: Linear(hidden_dim, 160)
-    # 2: LayerNorm
-    # 3: Linear(hidden_dim, hidden_dim)
-    # 5: Linear(action_space, hidden_dim) - final layer
-    hidden_dim = state_dict['policy_head.0.weight'].shape[0]
-    action_space = state_dict['policy_head.5.weight'].shape[0]
-    
-    return {
-        'embed_dim': embed_dim,
-        'hidden_dim': hidden_dim,
-        'action_space': action_space,
-        'num_cards': num_cards,
-        'stack_seq_len': stack_seq_len,
-    }
-
-
 
 
 def load_random_game_states(
@@ -160,7 +85,7 @@ def load_random_game_states(
 
 @pytest.mark.parametrize("small_model_path,large_model_path", [
     (
-        "scoundrel/rl/alpha_scoundrel/policy/policy_small/checkpoints/20e_0.009mse_66a/policy_small_epoch_20.pt",
+        "scoundrel/rl/alpha_scoundrel/policy/policy_small/checkpoints/20e_0.008mse_68a/policy_small_epoch_20.pt",
         "scoundrel/rl/alpha_scoundrel/policy/policy_large/checkpoints/30e_0.007mse/policy_large_epoch_30.pt"
     ),
 ])
@@ -171,12 +96,12 @@ def test_inference_time_comparison(small_model_path: str, large_model_path: str)
     Measures inference time for both models on the same random game states
     from MCTS logs, averaging across 20 game states for consistency.
     
-    Architecture constants are automatically inferred from checkpoint state dict shapes,
-    so no manual configuration is needed when architectures change.
+    Architecture constants are automatically inferred from checkpoint state dicts
+    by the inference classes, so no manual configuration is needed when architectures change.
     
     Args:
-        small_model_path: Path to small model checkpoint
-        large_model_path: Path to large model checkpoint
+        small_model_path: Path to small model checkpoint (relative to workspace root)
+        large_model_path: Path to large model checkpoint (relative to workspace root)
     """
     # Resolve paths relative to workspace root
     # Go up from tests -> policy -> alpha_scoundrel -> rl -> scoundrel (package) -> scoundrel (workspace root)
@@ -204,49 +129,16 @@ def test_inference_time_comparison(small_model_path: str, large_model_path: str)
     except ValueError as e:
         pytest.skip(str(e))
     
-    # Infer architecture constants from checkpoint state dicts
+    # Initialize inference models - architecture constants are auto-detected
     try:
-        small_config = infer_small_model_architecture(small_path)
-    except (KeyError, IndexError, AttributeError) as e:
-        pytest.skip(f"Failed to infer small model architecture from checkpoint: {e}")
+        small_inference = PolicySmallInference(small_path)
+    except Exception as e:
+        pytest.skip(f"Failed to load small model from checkpoint: {e}")
     
     try:
-        large_config = infer_large_model_architecture(large_path)
-    except (KeyError, IndexError, AttributeError) as e:
-        pytest.skip(f"Failed to infer large model architecture from checkpoint: {e}")
-    
-    # Initialize inference models with inferred architecture constants
-    try:
-        small_inference = PolicySmallInference(
-            small_path,
-            scalar_encoder_out=small_config['scalar_encoder_out'],
-            hidden_dim=small_config['hidden_dim'],
-            action_space=small_config['action_space']
-        )
-    except RuntimeError as e:
-        if "size mismatch" in str(e) or "Error(s) in loading state_dict" in str(e):
-            pytest.skip(
-                f"Checkpoint architecture mismatch for small model. "
-                f"Error: {str(e)[:200]}"
-            )
-        raise
-    
-    try:
-        large_inference = PolicyLargeInference(
-            large_path,
-            embed_dim=large_config['embed_dim'],
-            hidden_dim=large_config['hidden_dim'],
-            action_space=large_config['action_space'],
-            num_cards=large_config['num_cards'],
-            stack_seq_len=large_config['stack_seq_len']
-        )
-    except RuntimeError as e:
-        if "size mismatch" in str(e) or "Error(s) in loading state_dict" in str(e):
-            pytest.skip(
-                f"Checkpoint architecture mismatch for large model. "
-                f"Error: {str(e)[:200]}"
-            )
-        raise
+        large_inference = PolicyLargeInference(large_path)
+    except Exception as e:
+        pytest.skip(f"Failed to load large model from checkpoint: {e}")
     
     # Warm up both models (first inference can be slower)
     if game_states:

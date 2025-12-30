@@ -7,6 +7,7 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     HIDDEN_DIM,
     NUM_CARDS,
     STACK_SEQ_LEN,
+    SCALAR_ENCODER_OUT,
 )
 
 
@@ -61,6 +62,9 @@ class PolicyLargeNet(nn.Module):
         # Unknown cards encoder: aggregate stats [potion_sum, weapon_sum, monster_sum]
         self.unknown_encoder = nn.Linear(3, 32)
         
+        # Total cards encoder: aggregate stats for entire dungeon deck [potion_sum, weapon_sum, monster_sum]
+        self.total_encoder = nn.Linear(3, 32)
+        
         # Attention mechanism to learn which positions/cards matter most
         self.position_attention = nn.Sequential(
             nn.Linear(64, 32),
@@ -71,18 +75,13 @@ class PolicyLargeNet(nn.Module):
         # Scalar features encoder (room + status)
         self.scalar_encoder = nn.Linear(scalar_input_dim, 64)
         
-        # Final policy head
-        # 64 (known cards) + 32 (unknown stats) + 64 (scalar) = 160
-        self.policy_head = nn.Sequential(
-            nn.Linear(160, hidden_dim),
-            nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_space),
-        )
+        # Final policy head (3 FC layers)
+        # 64 (known cards) + 32 (unknown stats) + 32 (total stats) + 64 (scalar) = 192
+        self.scalar_fc = nn.Linear(192, SCALAR_ENCODER_OUT)
+        self.shared_layer = nn.Linear(SCALAR_ENCODER_OUT, hidden_dim)
+        self.action_head = nn.Linear(hidden_dim, action_space)
 
-    def forward(self, scalar_data, sequence_data, unknown_stats):
+    def forward(self, scalar_data, sequence_data, unknown_stats, total_stats):
         """
         Forward pass through the network.
         
@@ -91,6 +90,8 @@ class PolicyLargeNet(nn.Module):
             sequence_data: [batch_size, seq_len] tensor of card IDs
                          (0 = unknown/padding, non-zero = known card)
             unknown_stats: [batch_size, 3] tensor of aggregate stats for unknown cards
+                         [potion_sum, weapon_sum, monster_sum] (normalized)
+            total_stats: [batch_size, 3] tensor of aggregate stats for entire dungeon deck
                          [potion_sum, weapon_sum, monster_sum] (normalized)
             
         Returns:
@@ -140,11 +141,17 @@ class PolicyLargeNet(nn.Module):
         # Encode unknown card statistics
         unknown_features = F.relu(self.unknown_encoder(unknown_stats))  # [B, 32]
         
+        # Encode total card statistics for entire dungeon deck
+        total_features = F.relu(self.total_encoder(total_stats))  # [B, 32]
+        
         # Encode scalar features (room + status)
         scalar_features = F.relu(self.scalar_encoder(scalar_data))  # [B, 64]
         
         # Combine all features
-        combined = torch.cat([known_features, unknown_features, scalar_features], dim=1)
+        combined = torch.cat([known_features, unknown_features, total_features, scalar_features], dim=1)
         
-        return self.policy_head(combined)
+        # Pass through 3 FC layers (from policy small)
+        x = F.relu(self.scalar_fc(combined))
+        x = F.relu(self.shared_layer(x))
+        return self.action_head(x)
 

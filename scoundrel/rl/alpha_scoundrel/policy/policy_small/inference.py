@@ -12,11 +12,12 @@ from scoundrel.rl.alpha_scoundrel.inference import BaseInference
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.network import PolicySmallNet
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import (
     STACK_SEQ_LEN,
-    SCALAR_ENCODER_OUT,
-    HIDDEN_DIM,
     ACTION_SPACE
 )
-from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import compute_stack_sums
+from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import (
+    compute_stack_sums,
+    compute_total_stats,
+)
 from scoundrel.rl.utils import mask_logits
 
 
@@ -33,8 +34,6 @@ class PolicySmallInference(BaseInference):
         checkpoint_path: Path | str,
         scalar_input_dim: Optional[int] = None,
         device: Optional[str] = None,
-        scalar_encoder_out: Optional[int] = None,
-        hidden_dim: Optional[int] = None,
         action_space: Optional[int] = None
     ):
         """
@@ -44,25 +43,17 @@ class PolicySmallInference(BaseInference):
             checkpoint_path: Path to model checkpoint (.pt file)
             scalar_input_dim: Scalar input dimension (auto-detected if None)
             device: Device to use ("cpu" or "cuda", auto-detected if None)
-            scalar_encoder_out: Architecture constant SCALAR_ENCODER_OUT 
-                               (auto-detected from checkpoint if None)
-            hidden_dim: Architecture constant HIDDEN_DIM 
-                       (auto-detected from checkpoint if None)
             action_space: Architecture constant ACTION_SPACE 
                          (auto-detected from checkpoint if None)
         """
         # Store checkpoint path for architecture inference
         self._checkpoint_path = Path(checkpoint_path)
         
-        # If any architecture param is None, infer from checkpoint
-        if scalar_encoder_out is None or hidden_dim is None or action_space is None:
+        # If action_space is None, infer from checkpoint
+        if action_space is None:
             inferred = self._infer_architecture_from_checkpoint()
-            scalar_encoder_out = scalar_encoder_out or inferred['scalar_encoder_out']
-            hidden_dim = hidden_dim or inferred['hidden_dim']
-            action_space = action_space or inferred['action_space']
+            action_space = inferred.get('action_space', ACTION_SPACE)
         
-        self.scalar_encoder_out = scalar_encoder_out
-        self.hidden_dim = hidden_dim
         self.action_space = action_space
         
         super().__init__(
@@ -78,25 +69,15 @@ class PolicySmallInference(BaseInference):
         
         Returns:
             Dictionary with architecture constants:
-            - scalar_encoder_out: Output dimension of scalar encoder
-            - hidden_dim: Hidden layer dimension
             - action_space: Action space size
         """
         checkpoint = torch.load(self._checkpoint_path, map_location='cpu')
         state_dict = checkpoint.get('model_state_dict', checkpoint)
         
-        # scalar_fc.weight: [scalar_encoder_out, combined_input_dim]
-        scalar_encoder_out = state_dict['scalar_fc.weight'].shape[0]
-        
-        # shared_layer.weight: [hidden_dim, scalar_encoder_out]
-        hidden_dim = state_dict['shared_layer.weight'].shape[0]
-        
-        # action_head.weight: [action_space, hidden_dim]
+        # action_head.weight: [action_space, combined_input_dim]
         action_space = state_dict['action_head.weight'].shape[0]
         
         return {
-            'scalar_encoder_out': scalar_encoder_out,
-            'hidden_dim': hidden_dim,
             'action_space': action_space,
         }
     
@@ -105,8 +86,6 @@ class PolicySmallInference(BaseInference):
         checkpoint_data = torch.load(self.checkpoint_path, map_location=self.device)
         model = PolicySmallNet(
             scalar_input_dim=self.scalar_input_dim,
-            scalar_encoder_out=self.scalar_encoder_out,
-            hidden_dim=self.hidden_dim,
             action_space=self.action_space
         )
         self._load_state_dict(model, checkpoint_data)
@@ -127,16 +106,18 @@ class PolicySmallInference(BaseInference):
         # Encode state
         s_scal, _ = self.translator.encode_state(state)
         stack_sums = compute_stack_sums(state)
+        total_stats = compute_total_stats(state)
         mask = self.translator.get_action_mask(state)
         
         # Move to device
         s_scal = s_scal.to(self.device)
         stack_sums = stack_sums.to(self.device)
+        total_stats = total_stats.to(self.device)
         mask = mask.to(self.device)
         
         # Run inference
         with torch.no_grad():
-            logits = self.model(s_scal, stack_sums.unsqueeze(0))
+            logits = self.model(s_scal, stack_sums.unsqueeze(0), total_stats.unsqueeze(0))
             masked_logits = mask_logits(logits, mask)
             probs = F.softmax(masked_logits, dim=-1)
             action_idx = int(torch.argmax(probs).item())

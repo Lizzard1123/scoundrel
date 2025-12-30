@@ -26,12 +26,48 @@ def compute_unknown_stats(game_state) -> torch.Tensor:
     Returns:
         Tensor [3] of [potion_sum, weapon_sum, monster_sum] normalized
     """
-    unknown_count = game_state.number_avoided * 4
-    unknown_cards = game_state.dungeon[:unknown_count]
+    # Known cards are at the BACK (avoided rooms), unknown are at the FRONT
+    known_count = game_state.number_avoided * 4
+    if known_count > 0 and known_count < len(game_state.dungeon):
+        unknown_cards = game_state.dungeon[:-known_count]
+    elif known_count >= len(game_state.dungeon):
+        # All cards are known (all from avoided rooms)
+        unknown_cards = []
+    else:
+        # No avoids, all cards are unknown
+        unknown_cards = game_state.dungeon
     
     potion_sum = sum(c.value for c in unknown_cards if c.type == CardType.POTION)
     weapon_sum = sum(c.value for c in unknown_cards if c.type == CardType.WEAPON)
     monster_sum = sum(c.value for c in unknown_cards if c.type == CardType.MONSTER)
+    
+    # Normalize by reasonable max values
+    # Max possible: all 9 potions (2-10) = 54, all 13 weapons (2-14) = 104, all 26 monsters = 208
+    return torch.tensor([
+        potion_sum / 100.0,
+        weapon_sum / 150.0,
+        monster_sum / 250.0
+    ], dtype=torch.float32)
+
+
+def compute_total_stats(game_state) -> torch.Tensor:
+    """
+    Compute aggregate statistics for ALL cards in dungeon deck.
+    
+    This includes both known and unknown cards - the entire dungeon deck.
+    
+    Args:
+        game_state: GameState object
+        
+    Returns:
+        Tensor [3] of [potion_sum, weapon_sum, monster_sum] normalized
+    """
+    # Use all cards in the dungeon deck
+    all_cards = game_state.dungeon
+    
+    potion_sum = sum(c.value for c in all_cards if c.type == CardType.POTION)
+    weapon_sum = sum(c.value for c in all_cards if c.type == CardType.WEAPON)
+    monster_sum = sum(c.value for c in all_cards if c.type == CardType.MONSTER)
     
     # Normalize by reasonable max values
     # Max possible: all 9 potions (2-10) = 54, all 13 weapons (2-14) = 104, all 26 monsters = 208
@@ -61,7 +97,7 @@ class MCTSDataset(Dataset):
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
-        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
         
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
@@ -86,11 +122,14 @@ class MCTSDataset(Dataset):
                         
                         # Compute unknown card statistics
                         unknown_stats = compute_unknown_stats(game_state)
+                        # Compute total card statistics for entire dungeon deck
+                        total_stats = compute_total_stats(game_state)
                         
                         self.samples.append((
                             scalar_features.squeeze(0),
                             sequence_features.squeeze(0),
                             unknown_stats,
+                            total_stats,
                             target_probs,
                             action_mask
                         ))
@@ -108,8 +147,8 @@ class MCTSDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        scalar_features, sequence_features, unknown_stats, target_probs, action_mask = self.samples[idx]
-        return scalar_features, sequence_features, unknown_stats, target_probs, action_mask
+        scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask = self.samples[idx]
+        return scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask
 
 
 def create_dataloaders(

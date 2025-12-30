@@ -58,10 +58,17 @@ class ScoundrelTranslator:
         scalar_features = [hp, wep_val, wep_last, can_run, can_heal] + room_vec
 
         stack_ids = []
+        # Known cards are at the BACK of the dungeon (avoided cards)
+        # Unknown cards are at the FRONT (will be drawn before avoided cards)
+        known_count = game_state.number_avoided * 4
+        known_start = len(game_state.dungeon) - known_count if known_count > 0 else len(game_state.dungeon)
+        
         for i, elm in enumerate(game_state.dungeon):
-            if i >= game_state.number_avoided * 4:
+            if i >= known_start:
+                # Known card (at back, from avoided rooms)
                 stack_ids.append(self._card_to_id(elm))
             else:
+                # Unknown card (at front)
                 stack_ids.append(0)
         padding = [0] * (self.stack_seq_len - len(stack_ids))
         stack_seq = stack_ids + padding

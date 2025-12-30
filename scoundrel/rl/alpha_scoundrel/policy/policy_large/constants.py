@@ -3,8 +3,9 @@ NUM_CARDS = 45
 ACTION_SPACE = 5
 
 # Network architecture
-EMBED_DIM = 64         # Card and position embedding dimension
-HIDDEN_DIM = 512        # Hidden layer dimension in policy head
+EMBED_DIM = 128         # Card and position embedding dimension
+SCALAR_ENCODER_OUT = 4096  # Scalar encoder output dimension (from policy small)
+HIDDEN_DIM = 2048      # Hidden layer dimension in policy head (from policy small)
 
 # Training hyperparameters
 LR = 1e-3

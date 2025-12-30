@@ -17,7 +17,7 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     ACTION_SPACE,
     NUM_CARDS
 )
-from scoundrel.rl.alpha_scoundrel.policy.policy_large.data_loader import compute_unknown_stats
+from scoundrel.rl.alpha_scoundrel.policy.policy_large.data_loader import compute_unknown_stats, compute_total_stats
 from scoundrel.rl.utils import mask_logits
 
 
@@ -151,17 +151,19 @@ class PolicyLargeInference(BaseInference):
         # Encode state
         s_scal, s_seq = self.translator.encode_state(state)
         unknown_stats = compute_unknown_stats(state)
+        total_stats = compute_total_stats(state)
         mask = self.translator.get_action_mask(state)
         
         # Move to device
         s_scal = s_scal.to(self.device)
         s_seq = s_seq.to(self.device)
         unknown_stats = unknown_stats.to(self.device)
+        total_stats = total_stats.to(self.device)
         mask = mask.to(self.device)
         
         # Run inference
         with torch.no_grad():
-            logits = self.model(s_scal, s_seq, unknown_stats.unsqueeze(0))
+            logits = self.model(s_scal, s_seq, unknown_stats.unsqueeze(0), total_stats.unsqueeze(0))
             masked_logits = mask_logits(logits, mask)
             probs = F.softmax(masked_logits, dim=-1)
             action_idx = int(torch.argmax(probs).item())

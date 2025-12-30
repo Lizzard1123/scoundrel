@@ -23,8 +23,16 @@ def compute_unknown_stats(game_state) -> torch.Tensor:
     Returns:
         Tensor [3] of [potion_sum, weapon_sum, monster_sum] normalized
     """
-    unknown_count = game_state.number_avoided * 4
-    unknown_cards = game_state.dungeon[:unknown_count]
+    # Known cards are at the BACK (avoided rooms), unknown are at the FRONT
+    known_count = game_state.number_avoided * 4
+    if known_count > 0 and known_count < len(game_state.dungeon):
+        unknown_cards = game_state.dungeon[:-known_count]
+    elif known_count >= len(game_state.dungeon):
+        # All cards are known (all from avoided rooms)
+        unknown_cards = []
+    else:
+        # No avoids, all cards are unknown
+        unknown_cards = game_state.dungeon
     
     potion_sum = sum(c.value for c in unknown_cards if c.type == CardType.POTION)
     weapon_sum = sum(c.value for c in unknown_cards if c.type == CardType.WEAPON)

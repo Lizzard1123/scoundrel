@@ -9,7 +9,10 @@ from scoundrel.game.game_manager import GameManager
 from scoundrel.models.game_state import Action, GameState
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.network import PolicySmallNet
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import STACK_SEQ_LEN
-from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import compute_stack_sums
+from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import (
+    compute_stack_sums,
+    compute_total_stats,
+)
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import mask_logits
 from scoundrel.rl.viewer import run_interactive_viewer
@@ -52,10 +55,11 @@ def _greedy_action(model: PolicySmallNet, translator: ScoundrelTranslator, state
     """
     s_scal, _ = translator.encode_state(state)
     stack_sums = compute_stack_sums(state)
+    total_stats = compute_total_stats(state)
     mask = translator.get_action_mask(state)
 
     with torch.no_grad():
-        logits = model(s_scal, stack_sums.unsqueeze(0))
+        logits = model(s_scal, stack_sums.unsqueeze(0), total_stats.unsqueeze(0))
         masked_logits = mask_logits(logits, mask)
         probs = F.softmax(masked_logits, dim=-1)
         action_idx = int(torch.argmax(probs).item())

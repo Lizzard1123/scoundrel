@@ -11,11 +11,10 @@ from scoundrel.rl.alpha_scoundrel.data_utils import (
     deserialize_game_state,
     visits_to_distribution,
 )
-
-
 def compute_stack_sums(game_state: GameState) -> torch.Tensor:
     """
     Compute sums of card values in dungeon stack by type.
+    Only counts UNKNOWN cards (at front of dungeon, not from avoided rooms).
     
     Args:
         game_state: Current game state
@@ -28,9 +27,54 @@ def compute_stack_sums(game_state: GameState) -> torch.Tensor:
     weapon_sum = 0.0
     monster_sum = 0.0
     
-    # Only count cards that haven't been avoided
-    start_idx = game_state.number_avoided * 4
-    for card in game_state.dungeon[start_idx:]:
+    # Known cards are at the BACK (from avoided rooms), unknown are at the FRONT
+    known_count = game_state.number_avoided * 4
+    if known_count > 0 and known_count < len(game_state.dungeon):
+        unknown_cards = game_state.dungeon[:-known_count]
+    elif known_count >= len(game_state.dungeon):
+        # All cards are known (all from avoided rooms)
+        unknown_cards = []
+    else:
+        # No avoids, all cards are unknown
+        unknown_cards = game_state.dungeon
+    
+    for card in unknown_cards:
+        if card.type == CardType.POTION:
+            potion_sum += card.value
+        elif card.type == CardType.WEAPON:
+            weapon_sum += card.value
+        elif card.type == CardType.MONSTER:
+            monster_sum += card.value
+    
+    # Normalize by max card value (14)
+    return torch.FloatTensor([
+        potion_sum / 14.0,
+        weapon_sum / 14.0,
+        monster_sum / 14.0
+    ])
+
+
+def compute_total_stats(game_state: GameState) -> torch.Tensor:
+    """
+    Compute sums of card values for ALL cards in dungeon stack by type.
+    
+    This includes both known and unknown cards - the entire dungeon deck.
+    
+    Args:
+        game_state: Current game state
+        
+    Returns:
+        Tensor [3] with [potion_sum, weapon_sum, monster_sum]
+        Values are normalized by dividing by 14.0 (max card value)
+    """
+    potion_sum = 0.0
+    weapon_sum = 0.0
+    monster_sum = 0.0
+    
+    # Use all cards in the dungeon deck
+    all_cards = game_state.dungeon
+    
+    for card in all_cards:
         if card.type == CardType.POTION:
             potion_sum += card.value
         elif card.type == CardType.WEAPON:
@@ -66,7 +110,7 @@ class MCTSDataset(Dataset):
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
-        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
         
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
@@ -87,6 +131,7 @@ class MCTSDataset(Dataset):
                         game_state = deserialize_game_state(game_state_dict)
                         scalar_features, _ = translator.encode_state(game_state)
                         stack_sums = compute_stack_sums(game_state)
+                        total_stats = compute_total_stats(game_state)
                         action_mask = translator.get_action_mask(game_state)
                         mcts_stats = event.get("mcts_stats", [])
                         target_probs = visits_to_distribution(mcts_stats, action_mask)
@@ -94,6 +139,7 @@ class MCTSDataset(Dataset):
                         self.samples.append((
                             scalar_features.squeeze(0),
                             stack_sums,
+                            total_stats,
                             target_probs,
                             action_mask
                         ))
@@ -111,8 +157,8 @@ class MCTSDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        scalar_features, stack_sums, target_probs, action_mask = self.samples[idx]
-        return scalar_features, stack_sums, target_probs, action_mask
+        scalar_features, stack_sums, total_stats, target_probs, action_mask = self.samples[idx]
+        return scalar_features, stack_sums, total_stats, target_probs, action_mask
 
 
 def create_dataloaders(

@@ -15,10 +15,8 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import (
     CHECKPOINT_PREFIX,
     DEFAULT_MCTS_LOGS_DIR,
     EPOCHS,
-    HIDDEN_DIM,
     LR,
     MAX_GAMES,
-    SCALAR_ENCODER_OUT,
     STACK_SEQ_LEN,
     TRAIN_VAL_SPLIT,
 )
@@ -32,10 +30,8 @@ __all__ = [
     'CHECKPOINT_PREFIX',
     'DEFAULT_MCTS_LOGS_DIR',
     'EPOCHS',
-    'HIDDEN_DIM',
     'LR',
     'MAX_GAMES',
-    'SCALAR_ENCODER_OUT',
     'STACK_SEQ_LEN',
     'TRAIN_VAL_SPLIT',
 ]

@@ -4,6 +4,7 @@ from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from typing import Optional, Dict
 import time
+from datetime import datetime
 
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import (
     BATCH_SIZE,
@@ -20,12 +21,102 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import (
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.network import PolicySmallNet
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import create_dataloaders
 from scoundrel.rl.translator import ScoundrelTranslator
-from scoundrel.rl.utils import get_device, get_pin_memory, default_paths
+from scoundrel.rl.utils import get_device, get_pin_memory
 from scoundrel.rl.alpha_scoundrel.policy.training_utils import (
     compute_loss,
     compute_metrics,
     compute_gradient_norm,
 )
+
+
+def _save_training_summary(
+    checkpoint_dir: Path,
+    final_train_metrics: Optional[Dict[str, float]],
+    final_val_metrics: Optional[Dict[str, float]],
+    epochs: int,
+    batch_size: int,
+    lr: float,
+):
+    """
+    Save training summary files: results.txt, constants.txt, and network.txt
+    
+    Args:
+        checkpoint_dir: Directory to save summary files
+        final_train_metrics: Final training metrics from last epoch
+        final_val_metrics: Final validation metrics from last epoch
+        epochs: Total number of epochs
+        batch_size: Batch size used
+        lr: Learning rate used
+    """
+    base_dir = Path(__file__).parent
+    
+    # Save results.txt
+    results_path = checkpoint_dir / "results.txt"
+    with open(results_path, 'w') as f:
+        f.write("Training Results Summary\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Total Epochs: {epochs}\n")
+        f.write(f"Batch Size: {batch_size}\n")
+        f.write(f"Learning Rate: {lr}\n\n")
+        
+        if final_train_metrics:
+            f.write("Final Training Metrics:\n")
+            f.write("-" * 30 + "\n")
+            for key, value in final_train_metrics.items():
+                if isinstance(value, float):
+                    f.write(f"  {key}: {value:.6f}\n")
+                else:
+                    f.write(f"  {key}: {value}\n")
+            f.write("\n")
+        
+        if final_val_metrics:
+            f.write("Final Validation Metrics:\n")
+            f.write("-" * 30 + "\n")
+            
+            # Write main metrics first (loss, kl_div, accuracy, mse)
+            main_metrics = ['loss', 'kl_div', 'accuracy', 'mse']
+            for key in main_metrics:
+                if key in final_val_metrics:
+                    value = final_val_metrics[key]
+                    if isinstance(value, float):
+                        f.write(f"  {key}: {value:.6f}\n")
+                    else:
+                        f.write(f"  {key}: {value}\n")
+            
+            f.write("\n")
+            f.write("Per-Action Probabilities:\n")
+            f.write("-" * 30 + "\n")
+            
+            # Write per-action metrics grouped by action
+            action_names = ['Pick Card 1', 'Pick Card 2', 'Pick Card 3', 'Pick Card 4', 'Avoid']
+            for action_idx in range(5):
+                action_name = action_names[action_idx]
+                pred_key = f'prob_action_{action_idx}_pred'
+                target_key = f'prob_action_{action_idx}_target'
+                error_key = f'prob_action_{action_idx}_error'
+                
+                f.write(f"  {action_name} (Action {action_idx}):\n")
+                if pred_key in final_val_metrics:
+                    f.write(f"    Predicted: {final_val_metrics[pred_key]:.6f}\n")
+                if target_key in final_val_metrics:
+                    f.write(f"    Target:    {final_val_metrics[target_key]:.6f}\n")
+                if error_key in final_val_metrics:
+                    f.write(f"    Error:     {final_val_metrics[error_key]:.6f}\n")
+                f.write("\n")
+    
+    # Save constants.txt
+    constants_path = base_dir / "constants.py"
+    if constants_path.exists():
+        output_constants_path = checkpoint_dir / "constants.txt"
+        with open(constants_path, 'r') as src, open(output_constants_path, 'w') as dst:
+            dst.write(src.read())
+    
+    # Save network.txt
+    network_path = base_dir / "network.py"
+    if network_path.exists():
+        output_network_path = checkpoint_dir / "network.txt"
+        with open(network_path, 'r') as src, open(output_network_path, 'w') as dst:
+            dst.write(src.read())
 
 
 def train_epoch(
@@ -57,15 +148,16 @@ def train_epoch(
     
     epoch_start_time = time.time()
     
-    for batch_idx, (scalar_features, stack_sums, target_probs, action_mask) in enumerate(train_loader):
+    for batch_idx, (scalar_features, stack_sums, total_stats, target_probs, action_mask) in enumerate(train_loader):
         batch_start_time = time.time()
         
         scalar_features = scalar_features.to(device)
         stack_sums = stack_sums.to(device)
+        total_stats = total_stats.to(device)
         target_probs = target_probs.to(device)
         action_mask = action_mask.to(device)
         
-        logits = model(scalar_features, stack_sums)
+        logits = model(scalar_features, stack_sums, total_stats)
         loss = compute_loss(logits, target_probs, action_mask)
         
         optimizer.zero_grad()
@@ -100,13 +192,14 @@ def train_epoch(
     model.eval()
     epoch_accuracy = 0.0
     with torch.no_grad():
-        for scalar_features, stack_sums, target_probs, action_mask in train_loader:
+        for scalar_features, stack_sums, total_stats, target_probs, action_mask in train_loader:
             scalar_features = scalar_features.to(device)
             stack_sums = stack_sums.to(device)
+            total_stats = total_stats.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, stack_sums)
+            logits = model(scalar_features, stack_sums, total_stats)
             metrics = compute_metrics(logits, target_probs, action_mask)
             epoch_accuracy += metrics['accuracy'] * scalar_features.size(0)
     epoch_accuracy = epoch_accuracy / total_samples if total_samples > 0 else 0.0
@@ -157,13 +250,14 @@ def validate(
     per_action_metrics.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
     with torch.no_grad():
-        for batch_idx, (scalar_features, stack_sums, target_probs, action_mask) in enumerate(val_loader):
+        for batch_idx, (scalar_features, stack_sums, total_stats, target_probs, action_mask) in enumerate(val_loader):
             scalar_features = scalar_features.to(device)
             stack_sums = stack_sums.to(device)
+            total_stats = total_stats.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, stack_sums)
+            logits = model(scalar_features, stack_sums, total_stats)
             loss = compute_loss(logits, target_probs, action_mask)
             
             metrics = compute_metrics(
@@ -191,10 +285,20 @@ def validate(
     avg_metrics = {k: v / total_samples if total_samples > 0 else 0.0 for k, v in all_metrics.items()}
     avg_per_action = {k: v / total_samples if total_samples > 0 else 0.0 for k, v in per_action_metrics.items()}
     
+    # Compute action errors
+    action_errors = {}
+    for action_idx in range(5):
+        pred_key = f'prob_action_{action_idx}_pred'
+        target_key = f'prob_action_{action_idx}_target'
+        if pred_key in avg_per_action and target_key in avg_per_action:
+            error = abs(avg_per_action[pred_key] - avg_per_action[target_key])
+            action_errors[f'prob_action_{action_idx}_error'] = error
+    
     result = {
         'loss': avg_loss,
         **avg_metrics,
         **avg_per_action,
+        **action_errors,
     }
     
     if writer is not None:
@@ -248,11 +352,26 @@ def train(
     print(f"Using device: {device}")
     
     base_dir = Path(__file__).parent
+    
+    # Create unique timestamp for this training run
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"run_{timestamp}"
+    
+    # Create checkpoint directory with timestamp subfolder
     if checkpoint_dir is None:
-        checkpoint_dir = base_dir / CHECKPOINT_DIR
+        checkpoint_dir = base_dir / CHECKPOINT_DIR / run_id
+    else:
+        checkpoint_dir = Path(checkpoint_dir) / run_id
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     
-    log_dir, _ = default_paths(base_dir, "dummy.pt") if tensorboard else (None, None)
+    # Create unique run directory with timestamp for TensorBoard
+    if tensorboard:
+        runs_dir = base_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = runs_dir / run_id
+    else:
+        log_dir = None
+    
     writer = SummaryWriter(log_dir=str(log_dir)) if tensorboard else None
     
     if writer:
@@ -295,8 +414,9 @@ def train(
         
         dummy_scalar_tensor = dummy_scalar.to(device)
         dummy_stack_sums = torch.zeros((1, 3)).to(device)
+        dummy_total_stats = torch.zeros((1, 3)).to(device)
         try:
-            writer.add_graph(model, (dummy_scalar_tensor, dummy_stack_sums))
+            writer.add_graph(model, (dummy_scalar_tensor, dummy_stack_sums, dummy_total_stats))
         except Exception as e:
             print(f"Warning: Could not log model graph: {e}")
     
@@ -321,41 +441,57 @@ def train(
         writer.add_scalar('Data/TrainSamples', len(train_loader.dataset), 0)
         writer.add_scalar('Data/ValSamples', len(val_loader.dataset), 0)
     
-    for epoch in range(start_epoch, epochs):
-        train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
-        val_metrics = validate(model, val_loader, device, writer, epoch)
-        
-        print(f"Epoch {epoch+1}/{epochs}: "
-              f"Train Loss: {train_metrics['loss']:.6f}, "
-              f"Train Acc: {train_metrics['accuracy']:.4f}, "
-              f"Val Loss: {val_metrics['loss']:.6f}, "
-              f"Val KL: {val_metrics['kl_div']:.6f}, "
-              f"Val Acc: {val_metrics['accuracy']:.4f}, "
-              f"Speed: {train_metrics['samples_per_sec']:.1f} samples/sec")
-        
-        if (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == epochs:
-            checkpoint_path = checkpoint_dir / f"{CHECKPOINT_PREFIX}{epoch+1}.pt"
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': train_metrics['loss'],
-                'train_accuracy': train_metrics['accuracy'],
-                'val_loss': val_metrics['loss'],
-                'val_accuracy': val_metrics['accuracy'],
-                'val_kl_div': val_metrics['kl_div'],
-                'scalar_input_dim': scalar_input_dim,
-            }, checkpoint_path)
-            print(f"Saved checkpoint: {checkpoint_path}")
+    final_train_metrics = None
+    final_val_metrics = None
+    
+    try:
+        for epoch in range(start_epoch, epochs):
+            train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
+            val_metrics = validate(model, val_loader, device, writer, epoch)
             
-            if writer:
-                writer.add_text('Checkpoints/Latest', str(checkpoint_path), epoch)
-    
-    if writer:
-        writer.flush()
-        writer.close()
-    
-    print("Training complete!")
+            # Track final metrics
+            final_train_metrics = train_metrics
+            final_val_metrics = val_metrics
+            
+            print(f"Epoch {epoch+1}/{epochs}: "
+                  f"Train Loss: {train_metrics['loss']:.6f}, "
+                  f"Train Acc: {train_metrics['accuracy']:.4f}, "
+                  f"Val Loss: {val_metrics['loss']:.6f}, "
+                  f"Val KL: {val_metrics['kl_div']:.6f}, "
+                  f"Val Acc: {val_metrics['accuracy']:.4f}, "
+                  f"Speed: {train_metrics['samples_per_sec']:.1f} samples/sec")
+            
+            if (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == epochs:
+                checkpoint_path = checkpoint_dir / f"{CHECKPOINT_PREFIX}{epoch+1}.pt"
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'train_loss': train_metrics['loss'],
+                    'train_accuracy': train_metrics['accuracy'],
+                    'val_loss': val_metrics['loss'],
+                    'val_accuracy': val_metrics['accuracy'],
+                    'val_kl_div': val_metrics['kl_div'],
+                    'scalar_input_dim': scalar_input_dim,
+                }, checkpoint_path)
+                print(f"Saved checkpoint: {checkpoint_path}")
+                
+                if writer:
+                    writer.add_text('Checkpoints/Latest', str(checkpoint_path), epoch)
+        
+        print("Training complete!")
+    except KeyboardInterrupt:
+        print("\n\nTraining interrupted by user (Ctrl+C)")
+        print("Saving summary files...")
+    finally:
+        # Save summary files (always, even on interruption)
+        if final_train_metrics is not None or final_val_metrics is not None:
+            _save_training_summary(checkpoint_dir, final_train_metrics, final_val_metrics, epochs, batch_size, lr)
+            print(f"Summary files saved to {checkpoint_dir}")
+        
+        if writer:
+            writer.flush()
+            writer.close()
 
 
 def main():

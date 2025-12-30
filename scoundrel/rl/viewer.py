@@ -45,14 +45,7 @@ def _autoplay_with_min_delay(
             except (KeyboardInterrupt, EOFError):
                 break
             
-            # Execute action
-            engine.execute_turn(action_enum)
-            state = engine.get_state()
-            
-            if state.game_over:
-                break
-            
-            # Format and display UI
+            # Format and display UI BEFORE executing action so room and action match
             ui_text = format_ui_text_fn(action_enum, extra_info)
             title = actions_title(state) if callable(actions_title) else actions_title
             engine.ui.display_game_state(
@@ -60,6 +53,13 @@ def _autoplay_with_min_delay(
                 actions_override=ui_text,
                 actions_title=title,
             )
+            
+            # Execute action
+            engine.execute_turn(action_enum)
+            state = engine.get_state()
+            
+            if state.game_over:
+                break
             
             # Calculate elapsed time and sleep only if needed
             elapsed = time.time() - loop_start

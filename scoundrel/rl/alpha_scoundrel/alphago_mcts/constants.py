@@ -14,6 +14,9 @@ ALPHAGO_VALUE_WEIGHT = 0.5  # λ in [0,1]: 0=pure value net, 1=pure rollout
 ALPHAGO_MAX_DEPTH = 120  # Max rollout depth
 
 # Parallelization
+# NOTE: Workers use CPU to avoid GPU/MPS contention issues
+# Set to 0 or 1 to disable parallelization (use sequential search)
+# Higher values provide speedup but require more CPU cores
 ALPHAGO_NUM_WORKERS = 8  # Root parallelization workers
 ALPHAGO_TRANSPOSITION_TABLE_SIZE = 100000
 

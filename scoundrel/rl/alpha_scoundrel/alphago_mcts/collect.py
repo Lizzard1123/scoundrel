@@ -9,9 +9,18 @@ Runs AlphaGo MCTS agent on games and logs comprehensive game data including:
 import argparse
 import json
 import random
+import multiprocessing as mp
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+
+# Set multiprocessing start method to 'spawn' for PyTorch compatibility
+# This prevents CUDA/MPS context issues with fork on macOS
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 from scoundrel.game.game_manager import GameManager
 from scoundrel.rl.alpha_scoundrel.alphago_mcts.alphago_agent import AlphaGoAgent
@@ -277,54 +286,85 @@ def collect_games(
         print()
     
     # Initialize agent (reuse same agent for all games)
-    agent = AlphaGoAgent(
-        num_simulations=num_simulations,
-        c_puct=ALPHAGO_C_PUCT,
-        value_weight=ALPHAGO_VALUE_WEIGHT,
-        max_depth=ALPHAGO_MAX_DEPTH,
-        num_workers=ALPHAGO_NUM_WORKERS,
-    )
+    try:
+        agent = AlphaGoAgent(
+            num_simulations=num_simulations,
+            c_puct=ALPHAGO_C_PUCT,
+            value_weight=ALPHAGO_VALUE_WEIGHT,
+            max_depth=ALPHAGO_MAX_DEPTH,
+            num_workers=ALPHAGO_NUM_WORKERS,
+        )
+    except Exception as e:
+        print(f"ERROR: Failed to initialize AlphaGo agent: {e}")
+        print("Please check that model checkpoints are available and valid.")
+        return {
+            "num_games": 0,
+            "wins": 0,
+            "win_percentage": 0.0,
+            "average_score": 0.0,
+            "best_score": 0,
+            "worst_score": 0,
+            "avg_turns": 0.0,
+            "total_turns": 0,
+            "output_dir": str(output_dir),
+            "saved_files": [],
+            "failed_games": [],
+            "num_failed": 0,
+            "initialization_error": str(e),
+        }
     
     saved_files = []
     scores = []
     total_turns = 0
     game_num = 0
     
+    failed_games = []
+    
     try:
         while num_games is None or game_num < num_games:
             game_num += 1
             game_seed = seed + game_num - 1
             
-            if verbose:
-                if num_games is None:
-                    print(f"Collecting game {game_num} (seed={game_seed})...", end=" ", flush=True)
-                else:
-                    print(f"Collecting game {game_num}/{num_games} (seed={game_seed})...", end=" ", flush=True)
+            try:
+                if verbose:
+                    if num_games is None:
+                        print(f"Collecting game {game_num} (seed={game_seed})...", end=" ", flush=True)
+                    else:
+                        print(f"Collecting game {game_num}/{num_games} (seed={game_seed})...", end=" ", flush=True)
+                
+                # Create new engine for each game
+                engine = GameManager(seed=game_seed)
+                
+                # Clear cache between games for consistent behavior
+                agent.clear_cache()
+                
+                # Collect game data
+                game_data = collect_game_data(agent, engine, game_seed, num_simulations)
+                
+                # Save game data
+                filepath = save_game_data(
+                    game_data,
+                    output_dir,
+                    game_seed
+                )
+                saved_files.append(str(filepath))
+                
+                score = game_data["metadata"]["final_score"]
+                num_turns = game_data["metadata"]["num_turns"]
+                scores.append(score)
+                total_turns += num_turns
+                
+                if verbose:
+                    print(f"Score={score}, Turns={num_turns}, Saved to {filepath.name}")
             
-            # Create new engine for each game
-            engine = GameManager(seed=game_seed)
-            
-            # Clear cache between games for consistent behavior
-            agent.clear_cache()
-            
-            # Collect game data
-            game_data = collect_game_data(agent, engine, game_seed, num_simulations)
-            
-            # Save game data
-            filepath = save_game_data(
-                game_data,
-                output_dir,
-                game_seed
-            )
-            saved_files.append(str(filepath))
-            
-            score = game_data["metadata"]["final_score"]
-            num_turns = game_data["metadata"]["num_turns"]
-            scores.append(score)
-            total_turns += num_turns
-            
-            if verbose:
-                print(f"Score={score}, Turns={num_turns}, Saved to {filepath.name}")
+            except Exception as e:
+                # Log the error but continue with next game
+                failed_games.append((game_seed, str(e)))
+                if verbose:
+                    print(f"FAILED: {e}")
+                    print(f"Continuing with next game...")
+                # Continue to next game
+                continue
     
     except KeyboardInterrupt:
         if verbose:
@@ -336,6 +376,8 @@ def collect_games(
     results = calculate_statistics(scores, total_turns, num_collected)
     results["output_dir"] = str(output_dir)
     results["saved_files"] = saved_files
+    results["failed_games"] = failed_games
+    results["num_failed"] = len(failed_games)
     
     # Print statistics
     if verbose:
@@ -344,6 +386,13 @@ def collect_games(
             title="Collection Complete",
             output_dir=str(output_dir),
         )
+        
+        # Print failed games summary if any
+        if failed_games:
+            print()
+            print(f"=== Failed Games ({len(failed_games)}) ===")
+            for seed, error in failed_games:
+                print(f"  Seed {seed}: {error}")
     
     return results
 

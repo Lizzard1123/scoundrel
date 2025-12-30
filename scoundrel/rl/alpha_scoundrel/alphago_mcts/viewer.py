@@ -3,6 +3,15 @@ Interactive viewer for watching AlphaGo-style MCTS agent play Scoundrel.
 """
 import argparse
 import os
+import multiprocessing as mp
+
+# Set multiprocessing start method to 'spawn' for PyTorch compatibility
+# This prevents CUDA/MPS context issues with fork on macOS
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 from scoundrel.models.game_state import Action, GameState
 from scoundrel.rl.alpha_scoundrel.alphago_mcts.alphago_agent import AlphaGoAgent
@@ -98,31 +107,56 @@ def run_alphago_viewer(
     """
     os.system('resize -s 14 88')
     
-    agent = AlphaGoAgent(
-        policy_large_checkpoint=policy_large_checkpoint,
-        policy_small_checkpoint=policy_small_checkpoint,
-        value_checkpoint=value_checkpoint,
-        num_simulations=num_simulations,
-        num_workers=num_workers,
-        value_weight=value_weight,
-    )
+    try:
+        agent = AlphaGoAgent(
+            policy_large_checkpoint=policy_large_checkpoint,
+            policy_small_checkpoint=policy_small_checkpoint,
+            value_checkpoint=value_checkpoint,
+            num_simulations=num_simulations,
+            num_workers=num_workers,
+            value_weight=value_weight,
+        )
+    except Exception as e:
+        print(f"ERROR: Failed to initialize AlphaGo agent: {e}")
+        print("Please check that model checkpoints are available and valid.")
+        print(f"\nCheckpoint paths:")
+        print(f"  Policy Large: {policy_large_checkpoint or 'default'}")
+        print(f"  Policy Small: {policy_small_checkpoint or 'default'}")
+        print(f"  Value Large: {value_checkpoint or 'default'}")
+        return
     
     parallel_str = f" | {num_workers} workers" if num_workers > 1 else ""
     label = f"AlphaGo MCTS ({num_simulations} sims, λ={value_weight}{parallel_str})"
     
     def get_alphago_action(state: GameState) -> tuple:
         """Get AlphaGo MCTS action and return with stats."""
-        action_idx = agent.select_action(state)
-        action_enum = agent.translator.decode_action(action_idx)
-        stats = agent.get_action_stats()
-        return action_enum, (action_idx, stats)
+        try:
+            action_idx = agent.select_action(state)
+            action_enum = agent.translator.decode_action(action_idx)
+            stats = agent.get_action_stats()
+            return action_enum, (action_idx, stats)
+        except Exception as e:
+            # If action selection fails, fall back to a simple heuristic
+            print(f"\nWarning: Action selection failed: {e}")
+            print("Falling back to first valid action...")
+            # Just take first card
+            from scoundrel.models.game_state import Action
+            return Action.CARD_1, (0, {})
     
-    run_interactive_viewer(
-        get_action_fn=get_alphago_action,
-        label=label,
-        seed=seed,
-        format_ui_text_fn=_format_alphago_ui_text
-    )
+    try:
+        run_interactive_viewer(
+            get_action_fn=get_alphago_action,
+            label=label,
+            seed=seed,
+            format_ui_text_fn=_format_alphago_ui_text
+        )
+    except KeyboardInterrupt:
+        print("\n\nViewer interrupted by user. Exiting...")
+    except Exception as e:
+        print(f"\n\nERROR: Viewer crashed: {e}")
+        print("This may be due to a multiprocessing or GPU issue.")
+        import traceback
+        traceback.print_exc()
 
 
 def parse_args():

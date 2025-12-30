@@ -11,11 +11,19 @@ import random
 import math
 from typing import List, Optional, Dict, Tuple
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
 import multiprocessing as mp
 from pathlib import Path
 
 import torch
+
+# Set multiprocessing start method to 'spawn' for PyTorch compatibility
+# This prevents CUDA/MPS context issues with fork on macOS
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 from scoundrel.game.game_logic import apply_action_to_state
 from scoundrel.models.game_state import GameState, Action
@@ -556,6 +564,9 @@ class AlphaGoAgent:
         
         Each worker runs independent simulations, then aggregate results.
         
+        IMPORTANT: Workers always use CPU to avoid GPU/MPS contention and deadlocks.
+        This is critical for multiprocessing stability with PyTorch models.
+        
         Args:
             game_state: Current game state
             
@@ -564,17 +575,44 @@ class AlphaGoAgent:
         """
         simulations_per_worker = self.num_simulations // self.num_workers
         
+        # CRITICAL: Force CPU for workers to avoid GPU/MPS fork issues
+        # Each worker loads models independently on CPU
+        worker_device = "cpu"
+        
         # Create worker arguments
         worker_args = [
             (game_state, simulations_per_worker, self.c_puct, self.value_weight, 
-             self.max_depth, self.device, str(self.policy_large.checkpoint_path),
+             self.max_depth, worker_device, str(self.policy_large.checkpoint_path),
              str(self.policy_small.checkpoint_path), str(self.value_net.checkpoint_path))
             for _ in range(self.num_workers)
         ]
         
-        # Run parallel workers
-        with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
-            worker_results = list(executor.map(_run_worker_search, worker_args))
+        # Run parallel workers with timeout protection
+        # Timeout = 5 minutes per worker (should be more than enough)
+        timeout_seconds = 300
+        
+        try:
+            mp_context = mp.get_context('spawn')
+            with ProcessPoolExecutor(max_workers=self.num_workers, mp_context=mp_context) as executor:
+                futures = [executor.submit(_run_worker_search, args) for args in worker_args]
+                worker_results = []
+                
+                for future in futures:
+                    try:
+                        result = future.result(timeout=timeout_seconds)
+                        worker_results.append(result)
+                    except TimeoutError:
+                        raise RuntimeError(
+                            f"Worker timed out after {timeout_seconds}s. "
+                            "This may indicate a deadlock or GPU contention issue."
+                        )
+                    except Exception as e:
+                        raise RuntimeError(f"Worker failed with error: {e}")
+        
+        except Exception as e:
+            # If parallel search fails, fall back to sequential
+            print(f"Warning: Parallel search failed ({e}), falling back to sequential search")
+            return self._sequential_search(game_state)
         
         # Aggregate results
         root = self._aggregate_roots(worker_results, game_state)
@@ -592,6 +630,12 @@ class AlphaGoAgent:
         Returns:
             Aggregated root node
         """
+        # Check for worker errors
+        errors = [r.get('error') for r in worker_results if 'error' in r]
+        if errors:
+            error_msg = "; ".join(errors)
+            raise RuntimeError(f"Worker errors occurred: {error_msg}")
+        
         # Create root node
         root = self._create_node(game_state)
         self._add_policy_priors(root, game_state)
@@ -688,6 +732,12 @@ def _run_worker_search(args) -> Dict:
     Worker function for parallel search.
     Runs independent MCTS simulations and returns results.
     
+    IMPORTANT: This function runs in a separate process with 'spawn' start method.
+    It must:
+    1. Use CPU device to avoid GPU/MPS contention
+    2. Import all necessary modules (not inherited from parent)
+    3. Create its own agent instance with models
+    
     Args:
         args: Tuple of (game_state, num_simulations, c_puct, value_weight, 
                         max_depth, device, policy_large_path, policy_small_path, value_path)
@@ -698,32 +748,45 @@ def _run_worker_search(args) -> Dict:
     (game_state, num_simulations, c_puct, value_weight, max_depth, device,
      policy_large_path, policy_small_path, value_path) = args
     
-    # Create worker agent
-    agent = AlphaGoAgent(
-        policy_large_checkpoint=policy_large_path,
-        policy_small_checkpoint=policy_small_path,
-        value_checkpoint=value_path,
-        num_simulations=num_simulations,
-        c_puct=c_puct,
-        value_weight=value_weight,
-        max_depth=max_depth,
-        num_workers=0,  # No nested parallelization
-        device=device
-    )
+    # Force CPU device for worker stability (should already be CPU from caller)
+    if device != "cpu":
+        device = "cpu"
     
-    # Run search
-    root = agent._sequential_search(game_state)
-    
-    # Extract child statistics
-    child_stats = {}
-    for child in root.children:
-        child_stats[child.action] = {
-            'visits': child.visits,
-            'value': child.value
+    try:
+        # Create worker agent
+        agent = AlphaGoAgent(
+            policy_large_checkpoint=policy_large_path,
+            policy_small_checkpoint=policy_small_path,
+            value_checkpoint=value_path,
+            num_simulations=num_simulations,
+            c_puct=c_puct,
+            value_weight=value_weight,
+            max_depth=max_depth,
+            num_workers=0,  # No nested parallelization
+            device=device
+        )
+        
+        # Run search
+        root = agent._sequential_search(game_state)
+        
+        # Extract child statistics
+        child_stats = {}
+        for child in root.children:
+            child_stats[child.action] = {
+                'visits': child.visits,
+                'value': child.value
+            }
+        
+        return {
+            'child_stats': child_stats,
+            'cache_stats': agent.transposition_table.stats()
         }
     
-    return {
-        'child_stats': child_stats,
-        'cache_stats': agent.transposition_table.stats()
-    }
+    except Exception as e:
+        # Return error information for debugging
+        return {
+            'error': str(e),
+            'child_stats': {},
+            'cache_stats': {'hits': 0, 'misses': 0, 'size': 0, 'max_size': 0, 'hit_rate': 0.0}
+        }
 

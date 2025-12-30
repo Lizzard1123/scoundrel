@@ -104,15 +104,8 @@ class PolicyLargeInference(BaseInference):
         # pos_embed.weight: [stack_seq_len, embed_dim]
         stack_seq_len = state_dict['pos_embed.weight'].shape[0]
         
-        # policy_head is a Sequential with layers:
-        # 0: Linear(hidden_dim, 160)
-        # 1: ReLU
-        # 2: LayerNorm
-        # 3: Linear(hidden_dim, hidden_dim)
-        # 4: ReLU
-        # 5: Linear(action_space, hidden_dim) - final layer
-        hidden_dim = state_dict['policy_head.0.weight'].shape[0]
-        action_space = state_dict['policy_head.5.weight'].shape[0]
+        # action_head.weight: [action_space, hidden_dim]
+        action_space, hidden_dim = state_dict['action_head.weight'].shape
         
         return {
             'embed_dim': embed_dim,

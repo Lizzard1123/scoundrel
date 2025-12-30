@@ -75,10 +75,17 @@ class PolicyLargeNet(nn.Module):
         # Scalar features encoder (room + status)
         self.scalar_encoder = nn.Linear(scalar_input_dim, 64)
         
-        # Final policy head (3 FC layers)
+        # Final policy head (10 FC layers)
         # 64 (known cards) + 32 (unknown stats) + 32 (total stats) + 64 (scalar) = 192
         self.scalar_fc = nn.Linear(192, SCALAR_ENCODER_OUT)
         self.shared_layer = nn.Linear(SCALAR_ENCODER_OUT, hidden_dim)
+        self.fc_layer = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer3 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer4 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer5 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer6 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_layer7 = nn.Linear(hidden_dim, hidden_dim)
         self.action_head = nn.Linear(hidden_dim, action_space)
 
     def forward(self, scalar_data, sequence_data, unknown_stats, total_stats):
@@ -150,8 +157,14 @@ class PolicyLargeNet(nn.Module):
         # Combine all features
         combined = torch.cat([known_features, unknown_features, total_features, scalar_features], dim=1)
         
-        # Pass through 3 FC layers (from policy small)
+        # Pass through 10 FC layers
         x = F.relu(self.scalar_fc(combined))
         x = F.relu(self.shared_layer(x))
+        x = F.relu(self.fc_layer(x))
+        x = F.relu(self.fc_layer2(x))
+        x = F.relu(self.fc_layer3(x))
+        x = F.relu(self.fc_layer4(x))
+        x = F.relu(self.fc_layer5(x))
+        x = F.relu(self.fc_layer6(x))
+        x = F.relu(self.fc_layer7(x))
         return self.action_head(x)
-

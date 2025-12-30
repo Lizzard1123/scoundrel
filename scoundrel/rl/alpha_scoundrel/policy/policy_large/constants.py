@@ -5,11 +5,12 @@ ACTION_SPACE = 5
 # Network architecture
 EMBED_DIM = 64         # Card and position embedding dimension
 SCALAR_ENCODER_OUT = 2048  # Scalar encoder output dimension (from policy small)
-HIDDEN_DIM = 1024      # Hidden layer dimension in policy head (from policy small)
+HIDDEN_DIM = 5096      # Hidden layer dimension in policy head (from policy small)
+DROPOUT_RATE = 0.15     # Dropout rate for hidden layers
 
 # Training hyperparameters
 LR = 1e-3
-BATCH_SIZE = 256
+BATCH_SIZE = 512
 EPOCHS = 1000
 TRAIN_VAL_SPLIT = 0.9
 MAX_GRAD_NORM = 1.0     # Maximum gradient norm for clipping

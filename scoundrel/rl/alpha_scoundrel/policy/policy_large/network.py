@@ -8,6 +8,7 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     NUM_CARDS,
     STACK_SEQ_LEN,
     SCALAR_ENCODER_OUT,
+    DROPOUT_RATE,
 )
 
 
@@ -34,7 +35,8 @@ class PolicyLargeNet(nn.Module):
         hidden_dim: int = None,
         action_space: int = None,
         num_cards: int = None,
-        stack_seq_len: int = None
+        stack_seq_len: int = None,
+        dropout_rate: float = None
     ):
         super(PolicyLargeNet, self).__init__()
         
@@ -44,6 +46,7 @@ class PolicyLargeNet(nn.Module):
         action_space = action_space if action_space is not None else ACTION_SPACE
         num_cards = num_cards if num_cards is not None else NUM_CARDS
         stack_seq_len = stack_seq_len if stack_seq_len is not None else STACK_SEQ_LEN
+        dropout_rate = dropout_rate if dropout_rate is not None else DROPOUT_RATE
         
         # Card embedding (0 = unknown/padding)
         self.card_embed = nn.Embedding(num_cards, embed_dim, padding_idx=0)
@@ -87,6 +90,9 @@ class PolicyLargeNet(nn.Module):
         self.fc_layer6 = nn.Linear(hidden_dim, hidden_dim)
         self.fc_layer7 = nn.Linear(hidden_dim, hidden_dim)
         self.action_head = nn.Linear(hidden_dim, action_space)
+        
+        # Dropout layers
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, scalar_data, sequence_data, unknown_stats, total_stats):
         """
@@ -159,12 +165,44 @@ class PolicyLargeNet(nn.Module):
         
         # Pass through 10 FC layers
         x = F.relu(self.scalar_fc(combined))
+        x = self.dropout(x)
         x = F.relu(self.shared_layer(x))
+        x = self.dropout(x)
+        
+        # Hidden layers with residual connections
+        residual = x
         x = F.relu(self.fc_layer(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer2(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer3(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer4(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer5(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer6(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
+        residual = x
         x = F.relu(self.fc_layer7(x))
+        x = self.dropout(x)
+        x = x + residual  # Residual connection
+        
         return self.action_head(x)

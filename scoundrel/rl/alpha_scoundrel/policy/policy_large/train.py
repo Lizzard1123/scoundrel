@@ -24,11 +24,14 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     CHECKPOINT_PREFIX,
     DEFAULT_MCTS_LOGS_DIR,
     EPOCHS,
+    HARD_LOSS_WEIGHT,
     LR,
     MAX_GAMES,
     MAX_GRAD_NORM,
     STACK_SEQ_LEN,
+    TEMPERATURE,
     TRAIN_VAL_SPLIT,
+    USE_Q_WEIGHTS,
     WARMUP_EPOCHS,
     MIN_LR_RATIO,
 )
@@ -174,7 +177,8 @@ def train_epoch(
     device: torch.device,
     writer: Optional[SummaryWriter] = None,
     epoch: int = 0,
-    max_grad_norm: float = MAX_GRAD_NORM
+    max_grad_norm: float = MAX_GRAD_NORM,
+    hard_loss_weight: float = 0.0
 ) -> Dict[str, float]:
     """
     Train for one epoch with comprehensive logging.
@@ -187,6 +191,7 @@ def train_epoch(
         writer: Optional TensorBoard writer
         epoch: Current epoch number
         max_grad_norm: Maximum gradient norm for clipping
+        hard_loss_weight: Weight for hard classification loss (0.0 to 1.0)
         
     Returns:
         Dictionary with training metrics
@@ -220,7 +225,7 @@ def train_epoch(
             scalar_features, sequence_features, unknown_stats, total_stats,
             room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
         )
-        loss = compute_loss(logits, target_probs, action_mask)
+        loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight)
         
         optimizer.zero_grad()
         loss.backward()
@@ -346,7 +351,8 @@ def validate(
     val_loader,
     device: torch.device,
     writer: Optional[SummaryWriter] = None,
-    epoch: int = 0
+    epoch: int = 0,
+    hard_loss_weight: float = 0.0
 ) -> Dict[str, float]:
     """
     Validate the model with comprehensive logging.
@@ -357,6 +363,7 @@ def validate(
         device: Device to use
         writer: Optional TensorBoard writer
         epoch: Current epoch number
+        hard_loss_weight: Weight for hard classification loss (0.0 to 1.0)
         
     Returns:
         Dictionary with validation metrics
@@ -388,7 +395,7 @@ def validate(
                 scalar_features, sequence_features, unknown_stats, total_stats,
                 room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
             )
-            loss = compute_loss(logits, target_probs, action_mask)
+            loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight)
             
             metrics = compute_metrics(
                 logits,
@@ -465,6 +472,9 @@ def train(
     train_val_split: float = TRAIN_VAL_SPLIT,
     warmup_epochs: int = WARMUP_EPOCHS,
     min_lr_ratio: float = MIN_LR_RATIO,
+    temperature: float = TEMPERATURE,
+    use_q_weights: bool = USE_Q_WEIGHTS,
+    hard_loss_weight: float = HARD_LOSS_WEIGHT,
 ):
     """
     Main training function with comprehensive logging.
@@ -481,6 +491,9 @@ def train(
         train_val_split: Fraction of data for training
         warmup_epochs: Number of warmup epochs
         min_lr_ratio: Minimum LR ratio for cosine decay
+        temperature: Temperature for sharpening target distributions (< 1.0 sharpens)
+        use_q_weights: If True, weight visits by their Q-values from MCTS
+        hard_loss_weight: Weight for hard classification loss (0.0 to 1.0)
     """
     device = get_device()
     print(f"Using device: {device}")
@@ -518,6 +531,9 @@ def train(
                 'max_games': max_games if max_games else -1,
                 'warmup_epochs': warmup_epochs,
                 'min_lr_ratio': min_lr_ratio,
+                'temperature': temperature,
+                'use_q_weights': use_q_weights,
+                'hard_loss_weight': hard_loss_weight,
             },
             {}
         )
@@ -530,6 +546,8 @@ def train(
     scalar_input_dim = dummy_scalar.shape[1]
     
     print(f"Loading data from {mcts_logs_dir}...")
+    print(f"Target sharpening: temperature={temperature}, use_q_weights={use_q_weights}")
+    print(f"Hybrid loss: hard_loss_weight={hard_loss_weight}")
     train_loader, val_loader = create_dataloaders(
         log_dir=mcts_logs_dir,
         translator=translator,
@@ -537,6 +555,8 @@ def train(
         train_val_split=train_val_split,
         max_games=max_games,
         num_workers=0,
+        temperature=temperature,
+        use_q_weights=use_q_weights,
     )
     
     model = PolicyLargeNet(scalar_input_dim=scalar_input_dim).to(device)
@@ -585,8 +605,8 @@ def train(
     
     try:
         for epoch in range(start_epoch, epochs):
-            train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
-            val_metrics = validate(model, val_loader, device, writer, epoch)
+            train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch, hard_loss_weight=hard_loss_weight)
+            val_metrics = validate(model, val_loader, device, writer, epoch, hard_loss_weight=hard_loss_weight)
             
             # Step scheduler
             scheduler.step()
@@ -710,8 +730,34 @@ def main():
         default=WARMUP_EPOCHS,
         help=f"Warmup epochs (default: {WARMUP_EPOCHS})"
     )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=TEMPERATURE,
+        help=f"Temperature for sharpening target distributions, < 1.0 sharpens (default: {TEMPERATURE})"
+    )
+    parser.add_argument(
+        "--use-q-weights",
+        action="store_true",
+        default=USE_Q_WEIGHTS,
+        help=f"Weight visits by Q-values from MCTS (default: {USE_Q_WEIGHTS})"
+    )
+    parser.add_argument(
+        "--no-q-weights",
+        action="store_true",
+        help="Disable Q-value weighting"
+    )
+    parser.add_argument(
+        "--hard-loss-weight",
+        type=float,
+        default=HARD_LOSS_WEIGHT,
+        help=f"Weight for hard classification loss, 0.0-1.0 (default: {HARD_LOSS_WEIGHT})"
+    )
     
     args = parser.parse_args()
+    
+    # Handle q-weights flag
+    use_q_weights = args.use_q_weights and not args.no_q_weights
     
     train(
         mcts_logs_dir=Path(args.mcts_logs_dir),
@@ -723,6 +769,9 @@ def main():
         max_games=args.max_games,
         tensorboard=not args.no_tensorboard,
         warmup_epochs=args.warmup_epochs,
+        temperature=args.temperature,
+        use_q_weights=use_q_weights,
+        hard_loss_weight=args.hard_loss_weight,
     )
 
 

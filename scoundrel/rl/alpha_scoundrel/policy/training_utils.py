@@ -9,14 +9,27 @@ from typing import Optional, Dict
 from scoundrel.rl.utils import mask_logits
 
 
-def compute_loss(logits: torch.Tensor, target_probs: torch.Tensor, action_mask: torch.Tensor) -> torch.Tensor:
+def compute_loss(
+    logits: torch.Tensor, 
+    target_probs: torch.Tensor, 
+    action_mask: torch.Tensor,
+    hard_loss_weight: float = 0.0
+) -> torch.Tensor:
     """
-    Compute cross-entropy loss with action masking.
+    Compute hybrid loss combining soft distribution matching and hard best-action classification.
+    
+    The soft loss (cross-entropy with distribution targets) teaches the model to approximate
+    the full MCTS visit distribution. The hard loss (classification of best action) ensures
+    the model learns to identify the top action, not just match average distributions.
     
     Args:
         logits: Model output [batch_size, 5]
         target_probs: Target distribution [batch_size, 5]
         action_mask: Boolean mask [batch_size, 5]
+        hard_loss_weight: Weight for hard classification loss (0.0 to 1.0).
+                          0.0 = pure soft distribution matching (original behavior)
+                          1.0 = pure hard classification on best action
+                          Recommended: 0.2-0.4 for balanced training
         
     Returns:
         Scalar loss tensor
@@ -38,8 +51,20 @@ def compute_loss(logits: torch.Tensor, target_probs: torch.Tensor, action_mask: 
     target_probs_safe = target_probs + 1e-8
     target_probs_safe = target_probs_safe / target_probs_safe.sum(dim=-1, keepdim=True)
     
-    # Compute cross-entropy: -sum(target * log(pred))
-    loss = -(target_probs_safe * log_probs).sum(dim=-1)
+    # Soft loss: cross-entropy with distribution targets
+    # -sum(target * log(pred))
+    soft_loss = -(target_probs_safe * log_probs).sum(dim=-1)
+    
+    if hard_loss_weight > 0.0:
+        # Hard loss: classification loss on best action
+        # This forces the model to get the top action right, not just approximate the distribution
+        best_action = torch.argmax(target_probs, dim=-1)  # [batch_size]
+        hard_loss = F.cross_entropy(masked_logits, best_action, reduction='none')
+        
+        # Combine soft and hard losses
+        loss = (1.0 - hard_loss_weight) * soft_loss + hard_loss_weight * hard_loss
+    else:
+        loss = soft_loss
     
     # Filter out any NaN or Inf values
     loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))

@@ -26,6 +26,17 @@ EPOCHS = 500
 TRAIN_VAL_SPLIT = 0.9
 MAX_GRAD_NORM = 1.0        # Gradient clipping
 
+# Target distribution sharpening
+# Temperature < 1.0 sharpens the MCTS visit distribution towards one-hot
+# This makes training targets more decisive, improving action accuracy
+TEMPERATURE = 0.5          # Sharpening temperature (0.5 = moderate sharpening)
+USE_Q_WEIGHTS = False       # Weight visits by Q-values from MCTS
+
+# Hybrid loss parameters
+# Combines soft distribution matching with hard best-action classification
+# hard_weight=0 is pure distribution matching, hard_weight=1 is pure classification
+HARD_LOSS_WEIGHT = 1     # Weight for best-action classification loss
+
 # Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"
 MAX_GAMES = None

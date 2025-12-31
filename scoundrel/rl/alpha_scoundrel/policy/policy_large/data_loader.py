@@ -170,6 +170,7 @@ class MCTSDataset(Dataset):
     Dataset for loading MCTS log files and converting to training samples.
     
     Enhanced for transformer architecture with rich room features.
+    Supports temperature sharpening and Q-value weighting for target distributions.
     """
     
     def __init__(
@@ -177,15 +178,24 @@ class MCTSDataset(Dataset):
         log_dir: Path,
         translator: ScoundrelTranslator,
         max_games: Optional[int] = None,
+        temperature: float = 1.0,
+        use_q_weights: bool = False,
     ):
         """
         Args:
             log_dir: Directory containing MCTS log JSON files
             translator: ScoundrelTranslator for encoding states
             max_games: Maximum number of games to load (None = all)
+            temperature: Temperature for sharpening target distributions.
+                        < 1.0 sharpens toward one-hot (more decisive targets)
+                        > 1.0 smooths toward uniform
+                        1.0 = no change (default)
+            use_q_weights: If True, weight visits by their Q-values from MCTS
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
+        self.temperature = temperature
+        self.use_q_weights = use_q_weights
         self.samples: List[Tuple[
             torch.Tensor,  # scalar_features
             torch.Tensor,  # sequence_features
@@ -203,6 +213,7 @@ class MCTSDataset(Dataset):
             log_files = log_files[:max_games]
         
         print(f"Loading {len(log_files)} game log files...")
+        print(f"  Temperature: {temperature}, Use Q-weights: {use_q_weights}")
         
         for log_file in log_files:
             try:
@@ -217,7 +228,14 @@ class MCTSDataset(Dataset):
                         scalar_features, sequence_features = translator.encode_state(game_state)
                         action_mask = translator.get_action_mask(game_state)
                         mcts_stats = event.get("mcts_stats", [])
-                        target_probs = visits_to_distribution(mcts_stats, action_mask)
+                        
+                        # Apply temperature sharpening and Q-value weighting
+                        target_probs = visits_to_distribution(
+                            mcts_stats, 
+                            action_mask,
+                            temperature=temperature,
+                            use_q_weights=use_q_weights
+                        )
                         
                         # Compute enhanced features
                         unknown_stats = compute_unknown_stats(game_state)
@@ -260,6 +278,8 @@ def create_dataloaders(
     train_val_split: float = 0.9,
     max_games: Optional[int] = None,
     num_workers: int = 0,
+    temperature: float = 1.0,
+    use_q_weights: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and validation dataloaders from MCTS logs.
@@ -271,11 +291,19 @@ def create_dataloaders(
         train_val_split: Fraction of data for training (rest is validation)
         max_games: Maximum number of games to load (None = all)
         num_workers: Number of worker processes for data loading
+        temperature: Temperature for sharpening target distributions (< 1.0 sharpens)
+        use_q_weights: If True, weight visits by their Q-values from MCTS
         
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    full_dataset = MCTSDataset(log_dir, translator, max_games=max_games)
+    full_dataset = MCTSDataset(
+        log_dir, 
+        translator, 
+        max_games=max_games,
+        temperature=temperature,
+        use_q_weights=use_q_weights
+    )
     
     if len(full_dataset) == 0:
         raise ValueError(

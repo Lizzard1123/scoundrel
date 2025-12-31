@@ -1,5 +1,16 @@
+"""
+Training script for Policy Large Transformer Network.
+
+Features:
+- Warmup + cosine learning rate scheduling
+- Gradient clipping
+- Rich per-card features for room encoding
+- Cross-attention between room and dungeon
+"""
+
 import argparse
 import torch
+import math
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from typing import Optional, Dict
@@ -15,8 +26,11 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     EPOCHS,
     LR,
     MAX_GAMES,
+    MAX_GRAD_NORM,
     STACK_SEQ_LEN,
     TRAIN_VAL_SPLIT,
+    WARMUP_EPOCHS,
+    MIN_LR_RATIO,
 )
 from scoundrel.rl.alpha_scoundrel.policy.policy_large.network import PolicyLargeNet
 from scoundrel.rl.alpha_scoundrel.policy.policy_large.data_loader import create_dataloaders
@@ -27,6 +41,40 @@ from scoundrel.rl.alpha_scoundrel.policy.training_utils import (
     compute_metrics,
     compute_gradient_norm,
 )
+
+
+def get_lr_scheduler(optimizer, warmup_epochs: int, total_epochs: int, min_lr_ratio: float = 1.0):
+    """
+    Create learning rate scheduler.
+    
+    If warmup_epochs=0 and min_lr_ratio=1.0, returns constant LR.
+    Otherwise uses warmup + cosine decay.
+    
+    Args:
+        optimizer: PyTorch optimizer
+        warmup_epochs: Number of warmup epochs (0 for no warmup)
+        total_epochs: Total training epochs
+        min_lr_ratio: Minimum LR as ratio of initial LR (1.0 for constant)
+        
+    Returns:
+        LambdaLR scheduler
+    """
+    def lr_lambda(epoch):
+        # Constant LR if no warmup and no decay
+        if warmup_epochs == 0 and min_lr_ratio >= 1.0:
+            return 1.0
+        
+        if epoch < warmup_epochs:
+            # Linear warmup
+            return (epoch + 1) / max(1, warmup_epochs)
+        else:
+            # Cosine decay (or constant if min_lr_ratio == 1.0)
+            if min_lr_ratio >= 1.0:
+                return 1.0
+            progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+    
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def _save_training_summary(
@@ -125,7 +173,8 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     writer: Optional[SummaryWriter] = None,
-    epoch: int = 0
+    epoch: int = 0,
+    max_grad_norm: float = MAX_GRAD_NORM
 ) -> Dict[str, float]:
     """
     Train for one epoch with comprehensive logging.
@@ -137,6 +186,7 @@ def train_epoch(
         device: Device to use
         writer: Optional TensorBoard writer
         epoch: Current epoch number
+        max_grad_norm: Maximum gradient norm for clipping
         
     Returns:
         Dictionary with training metrics
@@ -148,22 +198,36 @@ def train_epoch(
     
     epoch_start_time = time.time()
     
-    for batch_idx, (scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask) in enumerate(train_loader):
+    for batch_idx, batch in enumerate(train_loader):
         batch_start_time = time.time()
+        
+        # Unpack batch (9 elements)
+        (scalar_features, sequence_features, unknown_stats, total_stats,
+         room_features, room_mask, dungeon_len, target_probs, action_mask) = batch
         
         scalar_features = scalar_features.to(device)
         sequence_features = sequence_features.to(device)
         unknown_stats = unknown_stats.to(device)
         total_stats = total_stats.to(device)
+        room_features = room_features.to(device)
+        room_mask = room_mask.to(device)
+        dungeon_len = dungeon_len.to(device)
         target_probs = target_probs.to(device)
         action_mask = action_mask.to(device)
         
-        logits = model(scalar_features, sequence_features, unknown_stats, total_stats)
+        # Forward pass with rich features
+        logits = model(
+            scalar_features, sequence_features, unknown_stats, total_stats,
+            room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
+        )
         loss = compute_loss(logits, target_probs, action_mask)
         
         optimizer.zero_grad()
         loss.backward()
-        grad_norm = compute_gradient_norm(model)
+        
+        # Gradient clipping
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        
         optimizer.step()
         
         batch_size = scalar_features.size(0)
@@ -174,11 +238,10 @@ def train_epoch(
         if writer is not None:
             global_step = epoch * len(train_loader) + batch_idx
             writer.add_scalar('Train/BatchLoss', loss.item(), global_step)
-            writer.add_scalar('Train/GradientNorm', grad_norm, global_step)
+            writer.add_scalar('Train/GradientNorm', grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm, global_step)
             writer.add_scalar('Train/LearningRate', optimizer.param_groups[0]['lr'], global_step)
             
             if batch_idx % 10 == 0:
-                # Don't log Train/Probabilities here - they're logged at epoch level to avoid step conflicts
                 metrics = compute_metrics(logits, target_probs, action_mask, writer=None, global_step=None, prefix='Train/')
                 writer.add_scalar('Train/Accuracy', metrics['accuracy'], global_step)
         
@@ -190,7 +253,7 @@ def train_epoch(
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     samples_per_sec = total_samples / epoch_time if epoch_time > 0 else 0.0
     
-    # Compute epoch-level metrics for consistency with validation
+    # Compute epoch-level metrics
     model.eval()
     epoch_accuracy = 0.0
     epoch_kl_div = 0.0
@@ -199,15 +262,24 @@ def train_epoch(
     epoch_per_action.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
     with torch.no_grad():
-        for scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask in train_loader:
+        for batch in train_loader:
+            (scalar_features, sequence_features, unknown_stats, total_stats,
+             room_features, room_mask, dungeon_len, target_probs, action_mask) = batch
+            
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
             unknown_stats = unknown_stats.to(device)
             total_stats = total_stats.to(device)
+            room_features = room_features.to(device)
+            room_mask = room_mask.to(device)
+            dungeon_len = dungeon_len.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, sequence_features, unknown_stats, total_stats)
+            logits = model(
+                scalar_features, sequence_features, unknown_stats, total_stats,
+                room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
+            )
             batch_metrics = compute_metrics(logits, target_probs, action_mask)
             batch_size = scalar_features.size(0)
             
@@ -253,7 +325,6 @@ def train_epoch(
         writer.add_scalar('Train/SamplesPerSec', samples_per_sec, epoch)
         writer.add_scalar('Train/EpochTime', epoch_time, epoch)
         
-        # Log epoch-level Train/Probabilities metrics for consistency with validation
         for action_idx in range(5):
             action_name = f"action_{action_idx}" if action_idx < 4 else "action_avoid"
             pred_key = f'prob_action_{action_idx}_pred'
@@ -299,22 +370,31 @@ def validate(
     per_action_metrics.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
     with torch.no_grad():
-        for batch_idx, (scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask) in enumerate(val_loader):
+        for batch_idx, batch in enumerate(val_loader):
+            (scalar_features, sequence_features, unknown_stats, total_stats,
+             room_features, room_mask, dungeon_len, target_probs, action_mask) = batch
+            
             scalar_features = scalar_features.to(device)
             sequence_features = sequence_features.to(device)
             unknown_stats = unknown_stats.to(device)
             total_stats = total_stats.to(device)
+            room_features = room_features.to(device)
+            room_mask = room_mask.to(device)
+            dungeon_len = dungeon_len.to(device)
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, sequence_features, unknown_stats, total_stats)
+            logits = model(
+                scalar_features, sequence_features, unknown_stats, total_stats,
+                room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
+            )
             loss = compute_loss(logits, target_probs, action_mask)
             
             metrics = compute_metrics(
                 logits,
                 target_probs,
                 action_mask,
-                writer=None,  # Don't log during loop, log epoch-level metrics at end
+                writer=None,
                 global_step=None,
                 prefix='Val/'
             )
@@ -383,6 +463,8 @@ def train(
     max_games: Optional[int] = MAX_GAMES,
     tensorboard: bool = True,
     train_val_split: float = TRAIN_VAL_SPLIT,
+    warmup_epochs: int = WARMUP_EPOCHS,
+    min_lr_ratio: float = MIN_LR_RATIO,
 ):
     """
     Main training function with comprehensive logging.
@@ -397,6 +479,8 @@ def train(
         max_games: Maximum number of games to load (None = all)
         tensorboard: Whether to enable TensorBoard logging
         train_val_split: Fraction of data for training
+        warmup_epochs: Number of warmup epochs
+        min_lr_ratio: Minimum LR ratio for cosine decay
     """
     device = get_device()
     print(f"Using device: {device}")
@@ -432,6 +516,8 @@ def train(
                 'epochs': epochs,
                 'train_val_split': train_val_split,
                 'max_games': max_games if max_games else -1,
+                'warmup_epochs': warmup_epochs,
+                'min_lr_ratio': min_lr_ratio,
             },
             {}
         )
@@ -454,22 +540,19 @@ def train(
     )
     
     model = PolicyLargeNet(scalar_input_dim=scalar_input_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    
+    # Use AdamW for better weight decay handling
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    
+    # Learning rate scheduler with warmup
+    scheduler = get_lr_scheduler(optimizer, warmup_epochs, epochs, min_lr_ratio)
     
     if writer:
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         writer.add_text('Model/TotalParams', str(total_params), 0)
         writer.add_text('Model/TrainableParams', str(trainable_params), 0)
-        
-        dummy_scalar_tensor = dummy_scalar.to(device)
-        dummy_seq_tensor = torch.zeros((1, STACK_SEQ_LEN), dtype=torch.long).to(device)
-        dummy_unknown_stats = torch.zeros((1, 3), dtype=torch.float32).to(device)
-        dummy_total_stats = torch.zeros((1, 3), dtype=torch.float32).to(device)
-        try:
-            writer.add_graph(model, (dummy_scalar_tensor, dummy_seq_tensor, dummy_unknown_stats, dummy_total_stats))
-        except Exception as e:
-            print(f"Warning: Could not log model graph: {e}")
+        print(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
     
     start_epoch = 0
     
@@ -479,6 +562,8 @@ def train(
         checkpoint = torch.load(resume_from, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint.get('epoch', 0) + 1
         print(f"Resumed from epoch {start_epoch - 1}")
         
@@ -487,6 +572,8 @@ def train(
     
     print(f"\nStarting training for {epochs} epochs...")
     print(f"Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
+    print(f"Architecture: Transformer with {model.num_heads} heads, {model.num_transformer_layers} layers")
+    print(f"Warmup: {warmup_epochs} epochs, LR: {lr} -> {lr * min_lr_ratio}")
     
     if writer:
         writer.add_scalar('Data/TrainSamples', len(train_loader.dataset), 0)
@@ -494,23 +581,43 @@ def train(
     
     final_train_metrics = None
     final_val_metrics = None
+    best_val_accuracy = 0.0
     
     try:
         for epoch in range(start_epoch, epochs):
             train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
             val_metrics = validate(model, val_loader, device, writer, epoch)
             
+            # Step scheduler
+            scheduler.step()
+            
             # Track final metrics
             final_train_metrics = train_metrics
             final_val_metrics = val_metrics
             
+            # Track best model
+            if val_metrics['accuracy'] > best_val_accuracy:
+                best_val_accuracy = val_metrics['accuracy']
+                best_checkpoint_path = checkpoint_dir / "best_model.pt"
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'val_accuracy': val_metrics['accuracy'],
+                    'val_mse': val_metrics['mse'],
+                    'scalar_input_dim': scalar_input_dim,
+                }, best_checkpoint_path)
+            
+            current_lr = optimizer.param_groups[0]['lr']
             print(f"Epoch {epoch+1}/{epochs}: "
                   f"Train Loss: {train_metrics['loss']:.6f}, "
                   f"Train Acc: {train_metrics['accuracy']:.4f}, "
                   f"Val Loss: {val_metrics['loss']:.6f}, "
-                  f"Val KL: {val_metrics['kl_div']:.6f}, "
+                  f"Val MSE: {val_metrics['mse']:.6f}, "
                   f"Val Acc: {val_metrics['accuracy']:.4f}, "
-                  f"Speed: {train_metrics['samples_per_sec']:.1f} samples/sec")
+                  f"LR: {current_lr:.2e}, "
+                  f"Speed: {train_metrics['samples_per_sec']:.1f}/s")
             
             if (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == epochs:
                 checkpoint_path = checkpoint_dir / f"{CHECKPOINT_PREFIX}{epoch+1}.pt"
@@ -518,11 +625,13 @@ def train(
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
                     'train_loss': train_metrics['loss'],
                     'train_accuracy': train_metrics['accuracy'],
                     'val_loss': val_metrics['loss'],
                     'val_accuracy': val_metrics['accuracy'],
                     'val_kl_div': val_metrics['kl_div'],
+                    'val_mse': val_metrics['mse'],
                     'scalar_input_dim': scalar_input_dim,
                 }, checkpoint_path)
                 print(f"Saved checkpoint: {checkpoint_path}")
@@ -530,7 +639,7 @@ def train(
                 if writer:
                     writer.add_text('Checkpoints/Latest', str(checkpoint_path), epoch)
         
-        print("Training complete!")
+        print(f"Training complete! Best val accuracy: {best_val_accuracy:.4f}")
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user (Ctrl+C)")
         print("Saving summary files...")
@@ -547,7 +656,7 @@ def train(
 
 def main():
     """Command-line interface."""
-    parser = argparse.ArgumentParser(description="Train Policy Large network on MCTS visit distributions")
+    parser = argparse.ArgumentParser(description="Train Policy Large Transformer network on MCTS visit distributions")
     parser.add_argument(
         "--mcts-logs-dir",
         type=str,
@@ -595,6 +704,12 @@ def main():
         action="store_true",
         help="Disable TensorBoard logging"
     )
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=WARMUP_EPOCHS,
+        help=f"Warmup epochs (default: {WARMUP_EPOCHS})"
+    )
     
     args = parser.parse_args()
     
@@ -607,6 +722,7 @@ def main():
         resume_from=Path(args.resume_from) if args.resume_from else None,
         max_games=args.max_games,
         tensorboard=not args.no_tensorboard,
+        warmup_epochs=args.warmup_epochs,
     )
 
 

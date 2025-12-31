@@ -1,10 +1,20 @@
+"""
+Data loader for Policy Large Transformer Network.
+
+Computes rich features for training including:
+- Per-card room features with contextual information
+- Dungeon sequence with known/unknown card encoding
+- Game state statistics
+"""
+
 import json
 import torch
 from pathlib import Path
 from typing import List, Tuple, Optional
 from torch.utils.data import Dataset, DataLoader
 
-from scoundrel.models.card import CardType
+from scoundrel.models.card import Card, CardType
+from scoundrel.game.combat import Combat
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import get_pin_memory
 from scoundrel.rl.alpha_scoundrel.data_utils import (
@@ -70,7 +80,6 @@ def compute_total_stats(game_state) -> torch.Tensor:
     monster_sum = sum(c.value for c in all_cards if c.type == CardType.MONSTER)
     
     # Normalize by reasonable max values
-    # Max possible: all 9 potions (2-10) = 54, all 13 weapons (2-14) = 104, all 26 monsters = 208
     return torch.tensor([
         potion_sum / 100.0,
         weapon_sum / 150.0,
@@ -78,9 +87,89 @@ def compute_total_stats(game_state) -> torch.Tensor:
     ], dtype=torch.float32)
 
 
+def compute_room_features(game_state) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute rich features for each room card.
+    
+    Features per card (8 total):
+    - is_present: 1 if card exists, 0 otherwise
+    - value: card value normalized by 14
+    - is_monster: 1 if monster, 0 otherwise
+    - is_weapon: 1 if weapon, 0 otherwise
+    - is_potion: 1 if potion, 0 otherwise
+    - can_weapon_beat: 1 if equipped weapon can beat this monster (value >= monster)
+    - damage_if_fight: expected damage if fighting this card (normalized)
+    - is_beneficial: 1 if weapon or potion (positive effect)
+    
+    Args:
+        game_state: GameState object
+        
+    Returns:
+        room_features: Tensor [4, 8] of per-card features
+        room_mask: Tensor [4] boolean mask, True for empty slots
+    """
+    room_features = []
+    room_mask = []
+    
+    weapon = game_state.equipped_weapon
+    weapon_val = weapon.value if weapon else 0
+    
+    for i in range(4):
+        if i < len(game_state.room):
+            card = game_state.room[i]
+            is_present = 1.0
+            value = card.value / 14.0
+            
+            is_monster = 1.0 if card.type == CardType.MONSTER else 0.0
+            is_weapon = 1.0 if card.type == CardType.WEAPON else 0.0
+            is_potion = 1.0 if card.type == CardType.POTION else 0.0
+            
+            # Can weapon beat this monster?
+            can_weapon_beat = 0.0
+            damage_if_fight = 0.0
+            if card.type == CardType.MONSTER:
+                if Combat.can_use_weapon(game_state, card):
+                    damage = Combat.calculate_damage(card, weapon)
+                    can_weapon_beat = 1.0 if damage == 0 else 0.0
+                    damage_if_fight = damage / 14.0
+                else:
+                    damage_if_fight = card.value / 14.0
+            
+            is_beneficial = 1.0 if card.type in [CardType.WEAPON, CardType.POTION] else 0.0
+            
+            features = [is_present, value, is_monster, is_weapon, is_potion,
+                       can_weapon_beat, damage_if_fight, is_beneficial]
+            room_features.append(features)
+            room_mask.append(False)
+        else:
+            # Empty slot
+            room_features.append([0.0] * 8)
+            room_mask.append(True)
+    
+    return (
+        torch.tensor(room_features, dtype=torch.float32),
+        torch.tensor(room_mask, dtype=torch.bool)
+    )
+
+
+def compute_dungeon_len(game_state) -> torch.Tensor:
+    """
+    Compute actual dungeon length.
+    
+    Args:
+        game_state: GameState object
+        
+    Returns:
+        Tensor scalar with dungeon length
+    """
+    return torch.tensor(len(game_state.dungeon), dtype=torch.long)
+
+
 class MCTSDataset(Dataset):
     """
     Dataset for loading MCTS log files and converting to training samples.
+    
+    Enhanced for transformer architecture with rich room features.
     """
     
     def __init__(
@@ -97,7 +186,17 @@ class MCTSDataset(Dataset):
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
-        self.samples: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.samples: List[Tuple[
+            torch.Tensor,  # scalar_features
+            torch.Tensor,  # sequence_features
+            torch.Tensor,  # unknown_stats
+            torch.Tensor,  # total_stats
+            torch.Tensor,  # room_features
+            torch.Tensor,  # room_mask
+            torch.Tensor,  # dungeon_len
+            torch.Tensor,  # target_probs
+            torch.Tensor,  # action_mask
+        ]] = []
         
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
@@ -120,16 +219,20 @@ class MCTSDataset(Dataset):
                         mcts_stats = event.get("mcts_stats", [])
                         target_probs = visits_to_distribution(mcts_stats, action_mask)
                         
-                        # Compute unknown card statistics
+                        # Compute enhanced features
                         unknown_stats = compute_unknown_stats(game_state)
-                        # Compute total card statistics for entire dungeon deck
                         total_stats = compute_total_stats(game_state)
+                        room_features, room_mask = compute_room_features(game_state)
+                        dungeon_len = compute_dungeon_len(game_state)
                         
                         self.samples.append((
                             scalar_features.squeeze(0),
                             sequence_features.squeeze(0),
                             unknown_stats,
                             total_stats,
+                            room_features,
+                            room_mask,
+                            dungeon_len,
                             target_probs,
                             action_mask
                         ))
@@ -147,8 +250,7 @@ class MCTSDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask = self.samples[idx]
-        return scalar_features, sequence_features, unknown_stats, total_stats, target_probs, action_mask
+        return self.samples[idx]
 
 
 def create_dataloaders(
@@ -207,4 +309,3 @@ def create_dataloaders(
     )
     
     return train_loader, val_loader
-

@@ -86,7 +86,7 @@ def load_random_game_states(
 @pytest.mark.parametrize("small_model_path,large_model_path", [
     (
         "scoundrel/rl/alpha_scoundrel/policy/policy_small/checkpoints/run_20251229_184938/policy_small_epoch_10.pt",
-        "scoundrel/rl/alpha_scoundrel/policy/policy_large/checkpoints/run_20251229_194640/policy_large_epoch_40.pt"
+        "scoundrel/rl/alpha_scoundrel/policy/policy_large/checkpoints/run_20251230_215704/policy_large_epoch_400.pt"
     ),
 ])
 def test_inference_time_comparison(small_model_path: str, large_model_path: str):

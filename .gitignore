@@ -6,3 +6,4 @@ scoundrel/rl/**/logs/*
 scoundrel/rl/**/checkpoints/*
 scoundrel/rl/**/runs/*
 scoundrel/rl/**/checkpoints_backup/*
+dist/*

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="images/scoundrel_banner.png" alt="Scoundrel Banner" width="100%" style="border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.4); border: 2px solid #8b5a2b;"/>
+<img src="https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/scoundrel_banner.png" alt="Scoundrel Banner" width="100%" style="border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.4); border: 2px solid #8b5a2b;"/>
 
 **A Python implementation of the Scoundrel card game**
 

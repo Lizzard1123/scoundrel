@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scoundrel"
+version = "0.1.0"
+description = "A Python implementation of the Scoundrel card game"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Ethan Gutierrez", email = "ethanlizzard1123@gmail.com"},
+]
+maintainers = [
+    {name = "Ethan Gutierrez", email = "ethanlizzard1123@gmail.com"},
+]
+keywords = ["card-game", "scoundrel", "terminal", "game", "reinforcement-learning", "mcts"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment :: Board Games",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Lizzard1123/scoundrel"
+Repository = "https://github.com/Lizzard1123/scoundrel"
+"Bug Reports" = "https://github.com/Lizzard1123/scoundrel/issues"
+Documentation = "https://github.com/Lizzard1123/scoundrel#readme"
+
+[project.scripts]
+play = "main:main"
+mcts = "scoundrel.rl.mcts.viewer:main"
+mcts-plot = "scoundrel.rl.mcts.plot_episode:main"
+mcts-eval = "scoundrel.rl.mcts.eval:main"
+mcts-collect = "scoundrel.rl.mcts.collect:main"
+mcts-evaluate-collection = "scoundrel.rl.mcts.evaluate_collection:main"
+alphago-eval = "scoundrel.rl.alpha_scoundrel.alphago_mcts.eval:main"
+alphago-collect = "scoundrel.rl.alpha_scoundrel.alphago_mcts.collect:main"
+alphago-evaluate-collection = "scoundrel.rl.alpha_scoundrel.alphago_mcts.evaluate_collection:main"
+alphago-viewer = "scoundrel.rl.alpha_scoundrel.alphago_mcts.viewer:main"
+policy-large-train = "scoundrel.rl.alpha_scoundrel.policy.policy_large.train:main"
+policy-large-viewer = "scoundrel.rl.alpha_scoundrel.policy.policy_large.viewer:main"
+policy-small-train = "scoundrel.rl.alpha_scoundrel.policy.policy_small.train:main"
+policy-small-viewer = "scoundrel.rl.alpha_scoundrel.policy.policy_small.viewer:main"
+value-large-train = "scoundrel.rl.alpha_scoundrel.value.value_large.train:main"
+value-large-viewer = "scoundrel.rl.alpha_scoundrel.value.value_large.viewer:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+include-package-data = false
+
+# For core game only
+#[tool.setuptools.packages]
+#find = {include = ["scoundrel.game*", "scoundrel.models*", "scoundrel.ui*"], exclude = ["scoundrel.rl*"]}

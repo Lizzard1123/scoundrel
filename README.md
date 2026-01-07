@@ -137,6 +137,32 @@ mcts-plot --num-simulations 1000000 --batch 5 --confidence
 
 </div>
 
+### 🎯 MCTS Data Collection (AlphaGo Style)
+
+MCTS data collection pipeline for training AlphaGo-style neural network agents with supervised learning from expert gameplay.
+
+<div align="center">
+
+![MCTS Data Distribution](images/mcts_data.png)
+
+*MCTS data collection showing game statistics and performance distribution*
+
+</div>
+
+**Data Collection Results:**
+
+```python
+Games: 5041
+
+Statistics:
+  Wins: 1316 (26.11%)
+  Average score: -21.45
+  Best score: 30
+  Worst score: -188
+  Average turns per game: 42.8
+  Total turns: 215803
+```
+
 ### 🧠 RL Agent
 
 Reinforcement learning agent using a Transformer-based architecture with PPO training.

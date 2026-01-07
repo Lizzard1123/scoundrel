@@ -62,5 +62,5 @@ py-modules = ["main"]
 include-package-data = false
 
 # For core game only
-#[tool.setuptools.packages]
-#find = {include = ["scoundrel.game*", "scoundrel.models*", "scoundrel.ui*"], exclude = ["scoundrel.rl*"]}
+[tool.setuptools.packages]
+find = {include = ["scoundrel.game*", "scoundrel.models*", "scoundrel.ui*", "scoundrel.rl*"], exclude = []}

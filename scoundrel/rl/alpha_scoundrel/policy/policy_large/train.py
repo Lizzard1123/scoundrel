@@ -24,6 +24,7 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     CHECKPOINT_PREFIX,
     DEFAULT_MCTS_LOGS_DIR,
     EPOCHS,
+    FOCAL_GAMMA,
     HARD_LOSS_WEIGHT,
     LR,
     MAX_GAMES,
@@ -124,8 +125,8 @@ def _save_training_summary(
             f.write("Final Validation Metrics:\n")
             f.write("-" * 30 + "\n")
             
-            # Write main metrics first (loss, kl_div, accuracy, mse)
-            main_metrics = ['loss', 'kl_div', 'accuracy', 'mse']
+            # Write main metrics first (loss, kl_div, accuracy, mse, focused_mse)
+            main_metrics = ['loss', 'kl_div', 'accuracy', 'mse', 'focused_mse']
             for key in main_metrics:
                 if key in final_val_metrics:
                     value = final_val_metrics[key]
@@ -225,7 +226,7 @@ def train_epoch(
             scalar_features, sequence_features, unknown_stats, total_stats,
             room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
         )
-        loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight)
+        loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight, focal_gamma=FOCAL_GAMMA)
         
         optimizer.zero_grad()
         loss.backward()
@@ -247,7 +248,7 @@ def train_epoch(
             writer.add_scalar('Train/LearningRate', optimizer.param_groups[0]['lr'], global_step)
             
             if batch_idx % 10 == 0:
-                metrics = compute_metrics(logits, target_probs, action_mask, writer=None, global_step=None, prefix='Train/')
+                metrics = compute_metrics(logits, target_probs, action_mask, writer=None, global_step=None, prefix='Train/', focal_gamma=FOCAL_GAMMA)
                 writer.add_scalar('Train/Accuracy', metrics['accuracy'], global_step)
         
         batch_time = time.time() - batch_start_time
@@ -263,6 +264,7 @@ def train_epoch(
     epoch_accuracy = 0.0
     epoch_kl_div = 0.0
     epoch_mse = 0.0
+    epoch_focused_mse = 0.0
     epoch_per_action = {f'prob_action_{i}_pred': 0.0 for i in range(5)}
     epoch_per_action.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
@@ -285,12 +287,13 @@ def train_epoch(
                 scalar_features, sequence_features, unknown_stats, total_stats,
                 room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
             )
-            batch_metrics = compute_metrics(logits, target_probs, action_mask)
+            batch_metrics = compute_metrics(logits, target_probs, action_mask, focal_gamma=FOCAL_GAMMA)
             batch_size = scalar_features.size(0)
             
             epoch_accuracy += batch_metrics['accuracy'] * batch_size
             epoch_kl_div += batch_metrics['kl_div'] * batch_size
             epoch_mse += batch_metrics['mse'] * batch_size
+            epoch_focused_mse += batch_metrics['focused_mse'] * batch_size
             
             for key in epoch_per_action:
                 if key in batch_metrics:
@@ -299,6 +302,7 @@ def train_epoch(
     epoch_accuracy = epoch_accuracy / total_samples if total_samples > 0 else 0.0
     epoch_kl_div = epoch_kl_div / total_samples if total_samples > 0 else 0.0
     epoch_mse = epoch_mse / total_samples if total_samples > 0 else 0.0
+    epoch_focused_mse = epoch_focused_mse / total_samples if total_samples > 0 else 0.0
     avg_epoch_per_action = {k: v / total_samples if total_samples > 0 else 0.0 for k, v in epoch_per_action.items()}
     model.train()
     
@@ -316,6 +320,7 @@ def train_epoch(
         'accuracy': epoch_accuracy,
         'kl_div': epoch_kl_div,
         'mse': epoch_mse,
+        'focused_mse': epoch_focused_mse,
         'samples_per_sec': samples_per_sec,
         'epoch_time': epoch_time,
         **avg_epoch_per_action,
@@ -327,6 +332,7 @@ def train_epoch(
         writer.add_scalar('Train/EpochAccuracy', epoch_accuracy, epoch)
         writer.add_scalar('Train/EpochKL_Div', epoch_kl_div, epoch)
         writer.add_scalar('Train/EpochMSE', epoch_mse, epoch)
+        writer.add_scalar('Train/EpochFocusedMSE', epoch_focused_mse, epoch)
         writer.add_scalar('Train/SamplesPerSec', samples_per_sec, epoch)
         writer.add_scalar('Train/EpochTime', epoch_time, epoch)
         
@@ -372,7 +378,7 @@ def validate(
     total_loss = 0.0
     total_samples = 0
     
-    all_metrics = {'kl_div': 0.0, 'accuracy': 0.0, 'mse': 0.0}
+    all_metrics = {'kl_div': 0.0, 'accuracy': 0.0, 'mse': 0.0, 'focused_mse': 0.0}
     per_action_metrics = {f'prob_action_{i}_pred': 0.0 for i in range(5)}
     per_action_metrics.update({f'prob_action_{i}_target': 0.0 for i in range(5)})
     
@@ -395,7 +401,7 @@ def validate(
                 scalar_features, sequence_features, unknown_stats, total_stats,
                 room_features=room_features, room_mask=room_mask, dungeon_len=dungeon_len
             )
-            loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight)
+            loss = compute_loss(logits, target_probs, action_mask, hard_loss_weight=hard_loss_weight, focal_gamma=FOCAL_GAMMA)
             
             metrics = compute_metrics(
                 logits,
@@ -403,7 +409,8 @@ def validate(
                 action_mask,
                 writer=None,
                 global_step=None,
-                prefix='Val/'
+                prefix='Val/',
+                focal_gamma=FOCAL_GAMMA
             )
             
             batch_size = scalar_features.size(0)
@@ -443,6 +450,7 @@ def validate(
         writer.add_scalar('Val/KL_Div', avg_metrics['kl_div'], epoch)
         writer.add_scalar('Val/Accuracy', avg_metrics['accuracy'], epoch)
         writer.add_scalar('Val/MSE', avg_metrics['mse'], epoch)
+        writer.add_scalar('Val/FocusedMSE', avg_metrics['focused_mse'], epoch)
         
         for action_idx in range(5):
             action_name = f"action_{action_idx}" if action_idx < 4 else "action_avoid"
@@ -626,6 +634,7 @@ def train(
                     'scheduler_state_dict': scheduler.state_dict(),
                     'val_accuracy': val_metrics['accuracy'],
                     'val_mse': val_metrics['mse'],
+                    'val_focused_mse': val_metrics['focused_mse'],
                     'scalar_input_dim': scalar_input_dim,
                 }, best_checkpoint_path)
             
@@ -635,6 +644,7 @@ def train(
                   f"Train Acc: {train_metrics['accuracy']:.4f}, "
                   f"Val Loss: {val_metrics['loss']:.6f}, "
                   f"Val MSE: {val_metrics['mse']:.6f}, "
+                  f"Val Focused MSE: {val_metrics['focused_mse']:.6f}, "
                   f"Val Acc: {val_metrics['accuracy']:.4f}, "
                   f"LR: {current_lr:.2e}, "
                   f"Speed: {train_metrics['samples_per_sec']:.1f}/s")
@@ -652,6 +662,7 @@ def train(
                     'val_accuracy': val_metrics['accuracy'],
                     'val_kl_div': val_metrics['kl_div'],
                     'val_mse': val_metrics['mse'],
+                    'val_focused_mse': val_metrics['focused_mse'],
                     'scalar_input_dim': scalar_input_dim,
                 }, checkpoint_path)
                 print(f"Saved checkpoint: {checkpoint_path}")

@@ -29,13 +29,18 @@ MAX_GRAD_NORM = 1.0        # Gradient clipping
 # Target distribution sharpening
 # Temperature < 1.0 sharpens the MCTS visit distribution towards one-hot
 # This makes training targets more decisive, improving action accuracy
-TEMPERATURE = 0.5          # Sharpening temperature (0.5 = moderate sharpening)
+TEMPERATURE = 1          # Sharpening temperature (0.5 = moderate sharpening)
 USE_Q_WEIGHTS = False       # Weight visits by Q-values from MCTS
 
 # Hybrid loss parameters
 # Combines soft distribution matching with hard best-action classification
 # hard_weight=0 is pure distribution matching, hard_weight=1 is pure classification
-HARD_LOSS_WEIGHT = 1     # Weight for best-action classification loss
+HARD_LOSS_WEIGHT = 0     # Weight for best-action classification loss
+
+# Focal MSE parameters
+# Adapts Focal Loss concept to regression by modulating MSE with error magnitude
+# Higher gamma focuses training on hard examples (large prediction errors)
+FOCAL_GAMMA = 5        # Gamma parameter for focal MSE: |y-ŷ|^γ * (y-ŷ)²
 
 # Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"

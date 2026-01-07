@@ -30,7 +30,7 @@ Scoundrel is a dungeon-crawling card game where players navigate through rooms, 
 
 <div align="center">
 
-![Terminal UI](images/tui.png)
+![Terminal UI](https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/tui.png)
 
 **[📖 Official Scoundrel Rules PDF](http://www.stfj.net/art/2011/Scoundrel.pdf)**
 
@@ -115,7 +115,7 @@ mcts-plot --num-simulations 1000000 --batch 5 --confidence
 
 <div align="center">
 
-![MCTS Interactive Visualizer](images/mcts_tui.png)
+![MCTS Interactive Visualizer](https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/mcts_tui.png)
 
 *Interactive MCTS visualizer showing real-time gameplay*
 
@@ -123,7 +123,7 @@ mcts-plot --num-simulations 1000000 --batch 5 --confidence
 
 <div align="center">
 
-![MCTS Action Outlook](images/mcts_graph.png)
+![MCTS Action Outlook](https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/mcts_graph.png)
 
 *Average outlook of the action picked at each turn*
 
@@ -131,7 +131,7 @@ mcts-plot --num-simulations 1000000 --batch 5 --confidence
 
 <div align="center">
 
-![MCTS Batch Variability](images/mcts_batch_graph.png)
+![MCTS Batch Variability](https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/mcts_batch_graph.png)
 
 *MCTS performance variability across multiple runs (6 out of 10 runs won)*
 
@@ -143,7 +143,7 @@ MCTS data collection pipeline for training AlphaGo-style neural network agents w
 
 <div align="center">
 
-![MCTS Data Distribution](images/mcts_data.png)
+![MCTS Data Distribution](https://raw.githubusercontent.com/Lizzard1123/scoundrel/main/images/mcts_data.png)
 
 *MCTS data collection showing game statistics and performance distribution*
 

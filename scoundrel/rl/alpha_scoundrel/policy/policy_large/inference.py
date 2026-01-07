@@ -32,8 +32,7 @@ class PolicyLargeInference(BaseInference):
     """
     Inference class for Policy Large Transformer model.
     
-    Automatically infers architecture constants from checkpoint state dict if not provided,
-    making it robust to architecture changes over time.
+    This class now uses the standardized architecture defined in constants.py.
     """
     
     def __init__(
@@ -41,13 +40,6 @@ class PolicyLargeInference(BaseInference):
         checkpoint_path: Path | str,
         scalar_input_dim: Optional[int] = None,
         device: Optional[str] = None,
-        embed_dim: Optional[int] = None,
-        hidden_dim: Optional[int] = None,
-        action_space: Optional[int] = None,
-        num_cards: Optional[int] = None,
-        stack_seq_len: Optional[int] = None,
-        num_heads: Optional[int] = None,
-        num_transformer_layers: Optional[int] = None
     ):
         """
         Initialize Policy Large Transformer inference.
@@ -56,41 +48,14 @@ class PolicyLargeInference(BaseInference):
             checkpoint_path: Path to model checkpoint (.pt file)
             scalar_input_dim: Scalar input dimension (auto-detected if None)
             device: Device to use ("cpu" or "cuda", auto-detected if None)
-            embed_dim: Architecture constant EMBED_DIM 
-                      (auto-detected from checkpoint if None)
-            hidden_dim: Architecture constant HIDDEN_DIM 
-                       (auto-detected from checkpoint if None)
-            action_space: Architecture constant ACTION_SPACE 
-                         (auto-detected from checkpoint if None)
-            num_cards: Architecture constant NUM_CARDS 
-                      (auto-detected from checkpoint if None)
-            stack_seq_len: Architecture constant STACK_SEQ_LEN 
-                          (auto-detected from checkpoint if None)
-            num_heads: Number of attention heads
-            num_transformer_layers: Number of transformer layers
         """
-        # Store checkpoint path for architecture inference
-        self._checkpoint_path = Path(checkpoint_path)
-        
-        # If any architecture param is None, infer from checkpoint
-        if any(p is None for p in [embed_dim, hidden_dim, action_space, num_cards, 
-                                    stack_seq_len, num_heads, num_transformer_layers]):
-            inferred = self._infer_architecture_from_checkpoint()
-            embed_dim = embed_dim or inferred['embed_dim']
-            hidden_dim = hidden_dim or inferred['hidden_dim']
-            action_space = action_space or inferred['action_space']
-            num_cards = num_cards or inferred['num_cards']
-            stack_seq_len = stack_seq_len or inferred['stack_seq_len']
-            num_heads = num_heads or inferred['num_heads']
-            num_transformer_layers = num_transformer_layers or inferred['num_transformer_layers']
-        
-        self.embed_dim = embed_dim
-        self.hidden_dim = hidden_dim
-        self.action_space = action_space
-        self.num_cards = num_cards
-        self.stack_seq_len = stack_seq_len
-        self.num_heads = num_heads
-        self.num_transformer_layers = num_transformer_layers
+        self.embed_dim = EMBED_DIM
+        self.hidden_dim = HIDDEN_DIM
+        self.action_space = ACTION_SPACE
+        self.num_cards = NUM_CARDS
+        self.stack_seq_len = STACK_SEQ_LEN
+        self.num_heads = NUM_HEADS
+        self.num_transformer_layers = NUM_TRANSFORMER_LAYERS
         
         super().__init__(
             checkpoint_path=checkpoint_path,
@@ -98,75 +63,6 @@ class PolicyLargeInference(BaseInference):
             scalar_input_dim=scalar_input_dim,
             device=device
         )
-    
-    def _infer_architecture_from_checkpoint(self) -> Dict[str, int]:
-        """
-        Infer architecture constants from checkpoint state dict shapes.
-        
-        Returns:
-            Dictionary with architecture constants
-        """
-        checkpoint = torch.load(self._checkpoint_path, map_location='cpu')
-        state_dict = checkpoint.get('model_state_dict', checkpoint)
-        
-        # Infer from various layer shapes
-        # dungeon_encoder.card_embed.weight: [num_cards, embed_dim]
-        if 'dungeon_encoder.card_embed.weight' in state_dict:
-            num_cards, embed_dim = state_dict['dungeon_encoder.card_embed.weight'].shape
-        else:
-            # Fallback for older architecture
-            num_cards, embed_dim = state_dict.get('card_embed.weight', torch.zeros(45, 64)).shape
-        
-        # dungeon_encoder.pos_embed.weight: [stack_seq_len, embed_dim]
-        if 'dungeon_encoder.pos_embed.weight' in state_dict:
-            stack_seq_len = state_dict['dungeon_encoder.pos_embed.weight'].shape[0]
-        else:
-            stack_seq_len = state_dict.get('pos_embed.weight', torch.zeros(40, 64)).shape[0]
-        
-        # policy_head last layer: [action_space, hidden_dim // 2]
-        # Find the action head layer
-        action_space = 5  # Default
-        hidden_dim = 512  # Default
-        for key in state_dict:
-            if 'policy_head' in key and 'weight' in key:
-                shape = state_dict[key].shape
-                if shape[0] == 5:  # Action space output
-                    action_space = shape[0]
-                    # Previous layer gives hidden_dim // 2
-                elif len(shape) == 2 and shape[1] == 5:
-                    pass  # This is bias
-            if 'policy_head.0.weight' in key:
-                # First policy head layer: [hidden_dim, combined_dim]
-                hidden_dim = state_dict[key].shape[0]
-        
-        # Count transformer layers
-        num_transformer_layers = 0
-        for key in state_dict:
-            if 'room_encoder.layers.' in key:
-                layer_num = int(key.split('room_encoder.layers.')[1].split('.')[0])
-                num_transformer_layers = max(num_transformer_layers, layer_num + 1)
-        if num_transformer_layers == 0:
-            num_transformer_layers = 3  # Default
-        
-        # Infer num_heads from attention layer
-        num_heads = 8  # Default
-        for key in state_dict:
-            if 'attn.q_proj.weight' in key:
-                # q_proj.weight: [embed_dim, embed_dim]
-                # num_heads = embed_dim // head_dim
-                # We assume head_dim = 16 (common for small models)
-                num_heads = max(1, embed_dim // 16)
-                break
-        
-        return {
-            'embed_dim': embed_dim,
-            'hidden_dim': hidden_dim,
-            'action_space': action_space,
-            'num_cards': num_cards,
-            'stack_seq_len': stack_seq_len,
-            'num_heads': num_heads,
-            'num_transformer_layers': num_transformer_layers,
-        }
     
     def _load_model(self) -> PolicyLargeNet:
         """Load PolicyLargeNet model from checkpoint."""

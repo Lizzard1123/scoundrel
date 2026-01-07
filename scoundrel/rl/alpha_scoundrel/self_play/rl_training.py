@@ -508,14 +508,14 @@ def train_policy_rl(
         
         train_metrics = train_rl_epoch(
             model, train_loader, optimizer, device, writer,
-            global_epoch,
+            epoch=epoch,
             max_grad_norm=max_grad_norm,
             entropy_coef=entropy_coef,
         )
 
         val_metrics = validate_rl(
             model, val_loader, device, writer,
-            global_epoch,
+            epoch=epoch,
             entropy_coef=entropy_coef,
         )
 
@@ -562,8 +562,8 @@ def train_policy_rl(
             }, checkpoint_path)
             
             if writer is not None:
-                writer.add_scalar('Policy/BestValLoss', best_loss, global_epoch)
-                writer.add_scalar('Policy/BestValAccuracy', best_accuracy, global_epoch)
+                writer.add_scalar('Policy/BestValLoss', best_loss, epoch)
+                writer.add_scalar('Policy/BestValAccuracy', best_accuracy, epoch)
 
     training_time = time.time() - training_start_time
     
@@ -571,13 +571,6 @@ def train_policy_rl(
         print(f"  Best RL policy - Epoch: {best_epoch+1}, Loss: {best_loss:.4f}, Accuracy: {best_accuracy:.4f}")
         print(f"  Policy training completed in {training_time:.1f}s")
     
-    # Log training summary to TensorBoard
-    if writer is not None:
-        writer.add_scalar('Policy/TrainingTime', training_time, iteration)
-        writer.add_scalar('Policy/FinalBestLoss', best_loss, iteration)
-        writer.add_scalar('Policy/FinalBestAccuracy', best_accuracy, iteration)
-        writer.add_scalar('Policy/BestEpoch', best_epoch, iteration)
-
     # Include additional info in returned metrics
     final_metrics['best_loss'] = best_loss
     final_metrics['best_accuracy'] = best_accuracy

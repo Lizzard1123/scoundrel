@@ -20,6 +20,7 @@ from scoundrel.rl.alpha_scoundrel.alphago_mcts.constants import (
 
 
 def run_evaluation(
+    agent: AlphaGoAgent,
     num_games: int = EVAL_NUM_GAMES,
     seed: int = EVAL_SEED,
     verbose: bool = False
@@ -28,6 +29,7 @@ def run_evaluation(
     Run AlphaGo MCTS evaluation.
     
     Args:
+        agent: The AlphaGoAgent instance to evaluate.
         num_games: Number of games to play
         seed: Base seed for GameManager
         verbose: Print progress during evaluation
@@ -38,14 +40,6 @@ def run_evaluation(
         - average_score, best_score, worst_score
         - total_score, scores list
     """
-    agent = AlphaGoAgent(
-        num_simulations=ALPHAGO_NUM_SIMULATIONS,
-        c_puct=ALPHAGO_C_PUCT,
-        value_weight=ALPHAGO_VALUE_WEIGHT,
-        max_depth=ALPHAGO_MAX_DEPTH,
-        num_workers=ALPHAGO_NUM_WORKERS,
-    )
-    
     scores = []
     wins = 0
     
@@ -190,7 +184,11 @@ def main():
     
     args = parser.parse_args()
     
+    # Create a default agent for standalone evaluation
+    agent = AlphaGoAgent()
+    
     results = run_evaluation(
+        agent=agent,
         num_games=args.num_games,
         seed=args.seed,
         verbose=args.verbose

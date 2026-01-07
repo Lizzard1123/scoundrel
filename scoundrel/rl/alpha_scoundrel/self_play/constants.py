@@ -11,9 +11,9 @@ from pathlib import Path
 # =============================================================================
 # Self-play game generation
 # =============================================================================
-SELF_PLAY_GAMES_PER_ITERATION = 50
+SELF_PLAY_GAMES_PER_ITERATION = 10
 SELF_PLAY_NUM_WORKERS = 8              # Internal MCTS workers (threading, not multiprocessing)
-SELF_PLAY_SIMULATIONS = 800            # Fewer than eval (3000), more than training collection (300)
+SELF_PLAY_SIMULATIONS = 80            # Fewer than eval (3000), more than training collection (300)
 SELF_PLAY_USE_GPU = True               # Use GPU for inference during self-play
 
 # =============================================================================
@@ -26,9 +26,9 @@ BATCH_SIZE = 256
 # =============================================================================
 # Evaluation
 # =============================================================================
-EVAL_GAMES = 50
+EVAL_GAMES = 10
 EVAL_SEED = 42
-EVAL_SIMULATIONS = 1600  # Full evaluation strength
+EVAL_SIMULATIONS = 160  # Full evaluation strength
 
 # =============================================================================
 # Checkpointing and directories
@@ -50,7 +50,7 @@ BEST_CHECKPOINT_DIR = "best"
 POLICY_LR = 1e-4                 # Lower LR for fine-tuning
 POLICY_MAX_GRAD_NORM = 1.0
 ENTROPY_COEF = 0.01              # Entropy bonus for exploration
-REWARD_TYPE = "binary"           # "binary" (+1/-1), "normalized", or "scaled"
+REWARD_TYPE = "normalized"           # "binary" (+1/-1), "normalized", or "scaled"
 
 # =============================================================================
 # Value network training

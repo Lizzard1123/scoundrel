@@ -197,9 +197,9 @@ def _train_value_network(
     # Log model info
     if writer is not None:
         total_params = sum(p.numel() for p in model.parameters())
-        writer.add_scalar('Value/TotalParams', total_params, iteration)
-        writer.add_scalar('Value/TrainSamples', len(train_loader.dataset), iteration)
-        writer.add_scalar('Value/ValSamples', len(val_loader.dataset), iteration)
+        writer.add_scalar('Value/TotalParams', total_params, 0)
+        writer.add_scalar('Value/TrainSamples', len(train_loader.dataset), 0)
+        writer.add_scalar('Value/ValSamples', len(val_loader.dataset), 0)
 
     pretrained_mse = None
     if pretrained_checkpoint and pretrained_checkpoint.exists():
@@ -212,7 +212,7 @@ def _train_value_network(
             print(f"    Loaded checkpoint with val_mse: {pretrained_mse}")
         
         if writer is not None:
-            writer.add_text(f'Value/PretrainedFrom_Iter{iteration}', str(pretrained_checkpoint), iteration)
+            writer.add_text(f'Value/PretrainedFrom_Iter{iteration}', str(pretrained_checkpoint), 0)
     else:
         if verbose:
             print("  No pretrained value checkpoint found, training from scratch")
@@ -230,8 +230,8 @@ def _train_value_network(
     for epoch in range(VALUE_EPOCHS_PER_ITERATION):
         global_epoch = epoch + iteration * VALUE_EPOCHS_PER_ITERATION
         
-        train_metrics = train_value_epoch(model, train_loader, optimizer, device, writer, global_epoch)
-        val_metrics = validate_value(model, val_loader, device, writer, global_epoch)
+        train_metrics = train_value_epoch(model, train_loader, optimizer, device, writer, epoch)
+        val_metrics = validate_value(model, val_loader, device, writer, epoch)
         final_metrics = val_metrics
         
         scheduler.step()
@@ -264,19 +264,13 @@ def _train_value_network(
             }, checkpoint_path)
             
             if writer is not None:
-                writer.add_scalar('Value/BestValMSE', best_val_mse, global_epoch)
+                writer.add_scalar('Value/BestValMSE', best_val_mse, epoch)
 
     training_time = time.time() - training_start_time
     
     if verbose:
         print(f"  Best value - Epoch: {best_epoch+1}, MSE: {best_val_mse:.4f}")
         print(f"  Value training completed in {training_time:.1f}s")
-    
-    # Log training summary
-    if writer is not None:
-        writer.add_scalar('Value/TrainingTime', training_time, iteration)
-        writer.add_scalar('Value/FinalBestMSE', best_val_mse, iteration)
-        writer.add_scalar('Value/BestEpoch', best_epoch, iteration)
     
     # Include additional info in returned metrics
     final_metrics['best_mse'] = best_val_mse
@@ -299,10 +293,11 @@ def _evaluate_agent(
             policy_large_checkpoint=policy_checkpoint,
             value_checkpoint=value_checkpoint,
             num_simulations=EVAL_SIMULATIONS,
-            num_workers=1,
+            num_workers=SELF_PLAY_NUM_WORKERS,
         )
 
         results = run_evaluation(
+            agent=agent,
             num_games=num_games,
             seed=seed,
             verbose=verbose
@@ -420,7 +415,29 @@ def run_self_play_training(
         if verbose:
             print("Initialized best checkpoints from initial models")
 
+    # Evaluate the current best agent to establish a baseline score
+    policy_best, value_best = _load_best_checkpoints(checkpoint_base_dir)
     best_eval_score = float('-inf')
+
+    if policy_best and value_best:
+        if verbose:
+            print(f"\nEvaluating current best agent to establish baseline score...")
+            print(f"Policy: {policy_best}")
+            print(f"Value:  {value_best}")
+        
+        baseline_results = _evaluate_agent(
+            policy_checkpoint=policy_best,
+            value_checkpoint=value_best,
+            num_games=EVAL_GAMES,
+            seed=EVAL_SEED,
+            verbose=verbose,
+        )
+        best_eval_score = baseline_results['average_score']
+        if verbose:
+            print(f"Baseline score established: {best_eval_score:.2f}")
+            if writer:
+                writer.add_scalar('Progress/BestEvalScore', best_eval_score, start_iteration - 1)
+
     iteration = start_iteration
 
     try:
@@ -433,6 +450,12 @@ def run_self_play_training(
 
             iteration_dir, games_dir = _setup_iteration_directory(checkpoint_base_dir, iteration)
             policy_checkpoint, value_checkpoint = _load_best_checkpoints(checkpoint_base_dir)
+
+            # Create iteration-specific TensorBoard writer
+            iter_writer = None
+            if tensorboard and log_dir:
+                iter_log_dir = log_dir / f"iter_{iteration:03d}"
+                iter_writer = SummaryWriter(log_dir=str(iter_log_dir))
 
             if verbose:
                 print(f"Using policy checkpoint: {policy_checkpoint}")
@@ -470,7 +493,7 @@ def run_self_play_training(
                 games_dir=games_dir,
                 checkpoint_path=policy_checkpoint_path,
                 pretrained_checkpoint=policy_checkpoint,
-                writer=writer,
+                writer=iter_writer,
                 iteration=iteration,
                 device=device,
                 epochs=POLICY_EPOCHS_PER_ITERATION,
@@ -482,6 +505,12 @@ def run_self_play_training(
                 stack_seq_len=STACK_SEQ_LEN,
                 verbose=verbose,
             )
+            
+            if writer:
+                writer.add_scalar('Policy/TrainingTime', policy_metrics.get('training_time', 0), iteration)
+                writer.add_scalar('Policy/FinalBestLoss', policy_metrics.get('best_loss', 0), iteration)
+                writer.add_scalar('Policy/FinalBestAccuracy', policy_metrics.get('best_accuracy', 0), iteration)
+                writer.add_scalar('Policy/BestEpoch', policy_metrics.get('best_epoch', 0), iteration)
 
             # 3. Train value network
             if verbose:
@@ -491,11 +520,19 @@ def run_self_play_training(
                 games_dir=games_dir,
                 checkpoint_path=value_checkpoint_path,
                 pretrained_checkpoint=value_checkpoint,
-                writer=writer,
+                writer=iter_writer,
                 iteration=iteration,
                 device=device,
                 verbose=verbose,
             )
+            
+            if writer:
+                writer.add_scalar('Value/TrainingTime', value_metrics.get('training_time', 0), iteration)
+                writer.add_scalar('Value/FinalBestMSE', value_metrics.get('best_mse', 0), iteration)
+                writer.add_scalar('Value/BestEpoch', value_metrics.get('best_epoch', 0), iteration)
+            
+            if iter_writer:
+                iter_writer.close()
 
             # 4. Evaluate new agent
             if verbose:
@@ -616,7 +653,7 @@ Examples:
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=10,
+        default=1000,
         help="Maximum number of iterations to run (default: 10)"
     )
     parser.add_argument(

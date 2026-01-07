@@ -114,8 +114,21 @@ class BaseInference(ABC):
             model: Model to load state dict into
             checkpoint_data: Checkpoint data (dict or state dict)
         """
-        if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
-            model.load_state_dict(checkpoint_data['model_state_dict'])
-        else:
-            model.load_state_dict(checkpoint_data)
+        try:
+            if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
+                model.load_state_dict(checkpoint_data['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint_data)
+        except RuntimeError as e:
+            if "Error(s) in loading state_dict" in str(e):
+                error_message = (
+                    f"Architecture mismatch loading checkpoint {self.checkpoint_path}.\n"
+                    "The model's structure in your code does not match the structure in the checkpoint file.\n"
+                    "This usually happens after a code change. Ensure you are using a compatible checkpoint.\n\n"
+                    f"Original error: {e}"
+                )
+                raise ValueError(error_message) from e
+            else:
+                # Re-raise other runtime errors
+                raise e
 

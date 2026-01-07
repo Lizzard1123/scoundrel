@@ -122,9 +122,18 @@ def compute_reward(final_score: float, reward_type: str = "binary") -> float:
     if reward_type == "binary":
         return 1.0 if final_score > 0 else -1.0
     elif reward_type == "normalized":
-        # Normalize score to [-1, 1] range
-        # Typical scores range from -20 (death) to +20 (good win)
-        return max(-1.0, min(1.0, final_score / 20.0))
+        # Normalize score to [-1, 1] range based on game bounds
+        # Max Score: 30 (20 HP + 10 Potion Bonus)
+        # Min "Alive" Score: -188 (20 HP - 208 Total Monster Value)
+        # Scores below -188 (e.g. -300 for exit) are clamped to -1.0
+        
+        min_val = -188.0
+        max_val = 30.0
+        
+        # Linear mapping: (score - min) / (max - min) * 2 - 1
+        normalized = (final_score - min_val) / (max_val - min_val) * 2.0 - 1.0
+        
+        return max(-1.0, min(1.0, normalized))
     elif reward_type == "scaled":
         # Just scale by max possible score
         return final_score / 20.0

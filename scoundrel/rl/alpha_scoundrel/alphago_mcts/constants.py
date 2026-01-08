@@ -8,8 +8,8 @@ POLICY_SMALL_CHECKPOINT = "policy/policy_small/checkpoints/run_20260107_173211/p
 VALUE_LARGE_CHECKPOINT = "value/value_large/checkpoints/100e_193mse/value_large_epoch_100.pt"
 
 # MCTS parameters (fewer simulations needed with neural guidance)
-ALPHAGO_NUM_SIMULATIONS = 3000
-ALPHAGO_C_PUCT = 1.0  # PUCT exploration constant
+ALPHAGO_NUM_SIMULATIONS = 800
+ALPHAGO_C_PUCT = 1.41  # PUCT exploration constant
 ALPHAGO_VALUE_WEIGHT = 0.5  # λ in [0,1]: 0=pure value net, 1=pure rollout
 ALPHAGO_MAX_DEPTH = 120  # Max rollout depth
 

@@ -1,4 +1,5 @@
 import argparse
+import math
 import torch
 import torch.nn.functional as F
 from pathlib import Path
@@ -14,16 +15,58 @@ from scoundrel.rl.alpha_scoundrel.value.value_large.constants import (
     CHECKPOINT_PREFIX,
     DEFAULT_MCTS_LOGS_DIR,
     EPOCHS,
+    FOCAL_GAMMA,
     LR,
     MAX_GRAD_NORM,
     MAX_GAMES,
+    MIN_LR_RATIO,
     STACK_SEQ_LEN,
     TRAIN_VAL_SPLIT,
+    WARMUP_EPOCHS,
 )
 from scoundrel.rl.alpha_scoundrel.value.value_large.network import ValueLargeNet
 from scoundrel.rl.alpha_scoundrel.value.value_large.data_loader import create_dataloaders
+from scoundrel.rl.alpha_scoundrel.value.value_large.training_utils import (
+    compute_loss,
+    compute_metrics,
+    compute_gradient_norm,
+)
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import get_device, get_pin_memory
+
+
+def get_lr_scheduler(optimizer, warmup_epochs: int, total_epochs: int, min_lr_ratio: float = 1.0):
+    """
+    Create learning rate scheduler.
+
+    If warmup_epochs=0 and min_lr_ratio=1.0, returns constant LR.
+    Otherwise uses warmup + cosine decay.
+
+    Args:
+        optimizer: PyTorch optimizer
+        warmup_epochs: Number of warmup epochs (0 for no warmup)
+        total_epochs: Total training epochs
+        min_lr_ratio: Minimum LR as ratio of initial LR (1.0 for constant)
+
+    Returns:
+        LambdaLR scheduler
+    """
+    def lr_lambda(epoch):
+        # Constant LR if no warmup and no decay
+        if warmup_epochs == 0 and min_lr_ratio >= 1.0:
+            return 1.0
+
+        if epoch < warmup_epochs:
+            # Linear warmup
+            return (epoch + 1) / max(1, warmup_epochs)
+        else:
+            # Cosine decay (or constant if min_lr_ratio == 1.0)
+            if min_lr_ratio >= 1.0:
+                return 1.0
+            progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def _save_training_summary(
@@ -69,11 +112,30 @@ def _save_training_summary(
         if final_val_metrics:
             f.write("Final Validation Metrics:\n")
             f.write("-" * 30 + "\n")
-            for key, value in final_val_metrics.items():
-                if isinstance(value, float):
-                    f.write(f"  {key}: {value:.6f}\n")
-                else:
-                    f.write(f"  {key}: {value}\n")
+
+            # Write main metrics first (loss, mse, mae, rmse, focused_mse)
+            main_metrics = ['loss', 'mse', 'mae', 'rmse', 'focused_mse']
+            for key in main_metrics:
+                if key in final_val_metrics:
+                    value = final_val_metrics[key]
+                    if isinstance(value, float):
+                        f.write(f"  {key}: {value:.6f}\n")
+                    else:
+                        f.write(f"  {key}: {value}\n")
+
+            f.write("\n")
+            f.write("Additional Statistics:\n")
+            f.write("-" * 30 + "\n")
+
+            # Write additional metrics
+            additional_metrics = ['mean_error', 'pred_mean', 'target_mean', 'pred_std', 'target_std']
+            for key in additional_metrics:
+                if key in final_val_metrics:
+                    value = final_val_metrics[key]
+                    if isinstance(value, float):
+                        f.write(f"  {key}: {value:.6f}\n")
+                    else:
+                        f.write(f"  {key}: {value}\n")
     
     # Save constants.txt
     constants_path = base_dir / "constants.py"
@@ -89,76 +151,6 @@ def _save_training_summary(
         with open(network_path, 'r') as src, open(output_network_path, 'w') as dst:
             dst.write(src.read())
 
-
-def compute_gradient_norm(model: torch.nn.Module) -> float:
-    """
-    Compute the L2 norm of all gradients.
-    
-    Args:
-        model: PyTorch model
-        
-    Returns:
-        Gradient norm (returns 0.0 if NaN/inf detected)
-    """
-    total_norm = 0.0
-    for p in model.parameters():
-        if p.grad is not None:
-            param_norm = p.grad.data.norm(2)
-            if torch.isnan(param_norm) or torch.isinf(param_norm):
-                return float('nan')
-            total_norm += param_norm.item() ** 2
-    result = total_norm ** 0.5
-    if torch.isnan(torch.tensor(result)) or torch.isinf(torch.tensor(result)):
-        return float('nan')
-    return result
-
-
-def compute_value_metrics(
-    pred_values: torch.Tensor,
-    target_values: torch.Tensor,
-    writer: Optional[SummaryWriter] = None,
-    global_step: Optional[int] = None,
-    prefix: str = ""
-) -> Dict[str, float]:
-    """
-    Compute comprehensive metrics for value evaluation.
-    
-    Args:
-        pred_values: Model output [batch_size, 1]
-        target_values: Target values [batch_size]
-        writer: Optional TensorBoard writer
-        global_step: Optional global step for logging
-        prefix: Optional prefix for metric names
-        
-    Returns:
-        Dictionary with metrics: mse, mae, rmse, mean_error
-    """
-    pred_values = pred_values.squeeze(-1)  # [batch_size]
-    
-    mse = F.mse_loss(pred_values, target_values)
-    mae = F.l1_loss(pred_values, target_values)
-    rmse = torch.sqrt(mse)
-    mean_error = (pred_values - target_values).mean()
-    
-    metrics = {
-        'mse': mse.item(),
-        'mae': mae.item(),
-        'rmse': rmse.item(),
-        'mean_error': mean_error.item(),
-        'pred_mean': pred_values.mean().item(),
-        'target_mean': target_values.mean().item(),
-    }
-    
-    if writer is not None and global_step is not None:
-        writer.add_scalar(f'{prefix}MSE', mse.item(), global_step)
-        writer.add_scalar(f'{prefix}MAE', mae.item(), global_step)
-        writer.add_scalar(f'{prefix}RMSE', rmse.item(), global_step)
-        writer.add_scalar(f'{prefix}MeanError', mean_error.item(), global_step)
-        writer.add_scalar(f'{prefix}PredMean', metrics['pred_mean'], global_step)
-        writer.add_scalar(f'{prefix}TargetMean', metrics['target_mean'], global_step)
-        writer.add_scalar(f'{prefix}ValueRange', pred_values.max().item() - pred_values.min().item(), global_step)
-    
-    return metrics
 
 
 def train_epoch(
@@ -213,14 +205,14 @@ def train_epoch(
             continue
         
         pred_values = model(scalar_features, sequence_features, unknown_stats)
-        
+
         # Check for NaN/inf in predictions
         if torch.isnan(pred_values).any() or torch.isinf(pred_values).any():
             print(f"Warning: NaN/inf detected in pred_values at batch {batch_idx}")
             print(f"  pred_values stats: min={pred_values.min().item():.6f}, max={pred_values.max().item():.6f}, mean={pred_values.mean().item():.6f}")
             continue
-        
-        loss = F.mse_loss(pred_values.squeeze(-1), target_values)
+
+        loss = compute_loss(pred_values, target_values, focal_gamma=FOCAL_GAMMA)
         
         # Check for NaN/inf in loss
         if torch.isnan(loss) or torch.isinf(loss):
@@ -234,7 +226,7 @@ def train_epoch(
         
         # Clip gradients to prevent exploding gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
-        
+
         grad_norm = compute_gradient_norm(model)
         
         # Skip optimizer step if gradient norm is NaN/inf
@@ -257,7 +249,7 @@ def train_epoch(
             writer.add_scalar('Train/LearningRate', optimizer.param_groups[0]['lr'], global_step)
             
             if batch_idx % 10 == 0:
-                metrics = compute_value_metrics(pred_values, target_values, writer, global_step, prefix='Train/')
+                metrics = compute_metrics(pred_values, target_values, writer, global_step, prefix='Train/', focal_gamma=FOCAL_GAMMA)
         
         batch_time = time.time() - batch_start_time
         if writer is not None:
@@ -278,7 +270,7 @@ def train_epoch(
             target_values = target_values.to(device)
             
             pred_values = model(scalar_features, sequence_features, unknown_stats)
-            metrics = compute_value_metrics(pred_values, target_values)
+            metrics = compute_metrics(pred_values, target_values, focal_gamma=FOCAL_GAMMA)
             
             batch_size = scalar_features.size(0)
             for key in epoch_metrics:
@@ -329,7 +321,7 @@ def validate(
     total_loss = 0.0
     total_samples = 0
     
-    all_metrics = {'mse': 0.0, 'mae': 0.0, 'rmse': 0.0, 'mean_error': 0.0}
+    all_metrics = {'mse': 0.0, 'mae': 0.0, 'rmse': 0.0, 'mean_error': 0.0, 'focused_mse': 0.0}
     
     with torch.no_grad():
         for batch_idx, (scalar_features, sequence_features, unknown_stats, target_values) in enumerate(val_loader):
@@ -339,14 +331,15 @@ def validate(
             target_values = target_values.to(device)
             
             pred_values = model(scalar_features, sequence_features, unknown_stats)
-            loss = F.mse_loss(pred_values.squeeze(-1), target_values)
+            loss = compute_loss(pred_values, target_values, focal_gamma=FOCAL_GAMMA)
             
-            metrics = compute_value_metrics(
+            metrics = compute_metrics(
                 pred_values,
                 target_values,
                 writer=None,  # Don't log during loop, log epoch-level metrics at end
                 global_step=None,
-                prefix='Val/'
+                prefix='Val/',
+                focal_gamma=FOCAL_GAMMA
             )
             
             batch_size = scalar_features.size(0)
@@ -371,6 +364,7 @@ def validate(
         writer.add_scalar('Val/MAE', avg_metrics['mae'], epoch)
         writer.add_scalar('Val/RMSE', avg_metrics['rmse'], epoch)
         writer.add_scalar('Val/MeanError', avg_metrics['mean_error'], epoch)
+        writer.add_scalar('Val/FocusedMSE', avg_metrics['focused_mse'], epoch)
     
     return result
 
@@ -385,6 +379,9 @@ def train(
     max_games: Optional[int] = MAX_GAMES,
     tensorboard: bool = True,
     train_val_split: float = TRAIN_VAL_SPLIT,
+    warmup_epochs: int = WARMUP_EPOCHS,
+    min_lr_ratio: float = MIN_LR_RATIO,
+    focal_gamma: float = FOCAL_GAMMA,
 ):
     """
     Main training function with comprehensive logging.
@@ -434,6 +431,9 @@ def train(
                 'epochs': epochs,
                 'train_val_split': train_val_split,
                 'max_games': max_games if max_games else -1,
+                'warmup_epochs': warmup_epochs,
+                'min_lr_ratio': min_lr_ratio,
+                'focal_gamma': focal_gamma,
             },
             {}
         )
@@ -456,13 +456,19 @@ def train(
     )
     
     model = ValueLargeNet(scalar_input_dim=scalar_input_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    
+
+    # Use AdamW for better weight decay handling
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+
+    # Learning rate scheduler with warmup
+    scheduler = get_lr_scheduler(optimizer, warmup_epochs, epochs, min_lr_ratio)
+
     if writer:
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         writer.add_text('Model/TotalParams', str(total_params), 0)
         writer.add_text('Model/TrainableParams', str(trainable_params), 0)
+        print(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
         
         dummy_scalar_tensor = dummy_scalar.to(device)
         dummy_seq_tensor = torch.zeros((1, STACK_SEQ_LEN), dtype=torch.long).to(device)
@@ -480,14 +486,19 @@ def train(
         checkpoint = torch.load(resume_from, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint.get('epoch', 0) + 1
         print(f"Resumed from epoch {start_epoch - 1}")
-        
+
         if writer:
             writer.add_text('Training/ResumedFrom', str(resume_from), 0)
     
     print(f"\nStarting training for {epochs} epochs...")
     print(f"Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
+    print(f"Architecture: Value network with position-aware encoding")
+    print(f"Warmup: {warmup_epochs} epochs, LR: {lr} -> {lr * min_lr_ratio}")
+    print(f"Focal loss: gamma={focal_gamma}")
     
     if writer:
         writer.add_scalar('Data/TrainSamples', len(train_loader.dataset), 0)
@@ -495,15 +506,35 @@ def train(
     
     final_train_metrics = None
     final_val_metrics = None
-    
+    best_val_mse = float('inf')  # Lower is better for MSE
+
     try:
         for epoch in range(start_epoch, epochs):
             train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
             val_metrics = validate(model, val_loader, device, writer, epoch)
-            
+
+            # Step scheduler
+            scheduler.step()
+
             # Track final metrics
             final_train_metrics = train_metrics
             final_val_metrics = val_metrics
+
+            # Track best model (lowest validation MSE)
+            if val_metrics['mse'] < best_val_mse:
+                best_val_mse = val_metrics['mse']
+                best_checkpoint_path = checkpoint_dir / "best_model.pt"
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'val_mse': val_metrics['mse'],
+                    'val_mae': val_metrics['mae'],
+                    'val_rmse': val_metrics['rmse'],
+                    'val_focused_mse': val_metrics['focused_mse'],
+                    'scalar_input_dim': scalar_input_dim,
+                }, best_checkpoint_path)
             
             print(f"Epoch {epoch+1}/{epochs}: "
                   f"Train Loss: {train_metrics['loss']:.6f}, "
@@ -511,6 +542,7 @@ def train(
                   f"Val Loss: {val_metrics['loss']:.6f}, "
                   f"Val MSE: {val_metrics['mse']:.6f}, "
                   f"Val MAE: {val_metrics['mae']:.6f}, "
+                  f"LR: {optimizer.param_groups[0]['lr']:.2e}, "
                   f"Speed: {train_metrics['samples_per_sec']:.1f} samples/sec")
             
             if (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == epochs:
@@ -519,6 +551,7 @@ def train(
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
                     'train_loss': train_metrics['loss'],
                     'train_mse': train_metrics['mse'],
                     'val_loss': val_metrics['loss'],
@@ -531,7 +564,7 @@ def train(
                 if writer:
                     writer.add_text('Checkpoints/Latest', str(checkpoint_path), epoch)
         
-        print("Training complete!")
+        print(f"Training complete! Best val MSE: {best_val_mse:.6f}")
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user (Ctrl+C)")
         print("Saving summary files...")
@@ -608,6 +641,9 @@ def main():
         resume_from=Path(args.resume_from) if args.resume_from else None,
         max_games=args.max_games,
         tensorboard=not args.no_tensorboard,
+        warmup_epochs=WARMUP_EPOCHS,
+        min_lr_ratio=MIN_LR_RATIO,
+        focal_gamma=FOCAL_GAMMA,
     )
 
 

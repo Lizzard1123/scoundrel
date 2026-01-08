@@ -12,6 +12,11 @@ EPOCHS = 100
 TRAIN_VAL_SPLIT = 0.9
 MAX_GRAD_NORM = 1.0     # Maximum gradient norm for clipping
 
+# Advanced training parameters
+FOCAL_GAMMA = 2.0       # Gamma parameter for focal MSE loss
+WARMUP_EPOCHS = 0       # Number of warmup epochs for learning rate
+MIN_LR_RATIO = 0.1      # Minimum LR as ratio of initial LR (for cosine decay)
+
 # Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"
 MAX_GAMES = None

@@ -3,8 +3,8 @@ Configuration constants for AlphaGo-style MCTS.
 """
 
 # Model paths (relative to alpha_scoundrel/)
-POLICY_LARGE_CHECKPOINT = "policy/policy_large/checkpoints/run_20251229_194640/policy_large_epoch_40.pt"
-POLICY_SMALL_CHECKPOINT = "policy/policy_small/checkpoints/run_20251229_184938/policy_small_epoch_10.pt"
+POLICY_LARGE_CHECKPOINT = "policy/policy_large/checkpoints/run_20260107_132912/best_model.pt"
+POLICY_SMALL_CHECKPOINT = "policy/policy_small/checkpoints/run_20260107_173211/policy_small_epoch_50.pt"
 VALUE_LARGE_CHECKPOINT = "value/value_large/checkpoints/100e_193mse/value_large_epoch_100.pt"
 
 # MCTS parameters (fewer simulations needed with neural guidance)

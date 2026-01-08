@@ -10,9 +10,9 @@ ACTION_SPACE = 5
 
 # Transformer architecture
 EMBED_DIM = 128            # Embedding dimension for cards and features
-HIDDEN_DIM = 1024           # Hidden dimension in policy head
-NUM_HEADS = 32              # Number of attention heads (must divide EMBED_DIM)
-NUM_TRANSFORMER_LAYERS = 2 # Layers in room/dungeon encoders
+HIDDEN_DIM = 512           # Hidden dimension in policy head
+NUM_HEADS = 8              # Number of attention heads (must divide EMBED_DIM)
+NUM_TRANSFORMER_LAYERS = 3 # Layers in room/dungeon encoders
 FF_DIM_MULTIPLIER = 4.0    # FFN hidden dim = EMBED_DIM * this
 DROPOUT_RATE = 0.1         # Dropout rate
 
@@ -35,12 +35,12 @@ USE_Q_WEIGHTS = False       # Weight visits by Q-values from MCTS
 # Hybrid loss parameters
 # Combines soft distribution matching with hard best-action classification
 # hard_weight=0 is pure distribution matching, hard_weight=1 is pure classification
-HARD_LOSS_WEIGHT = 1     # Weight for best-action classification loss
+HARD_LOSS_WEIGHT = 0.5     # Weight for best-action classification loss
 
 # Focal MSE parameters
 # Adapts Focal Loss concept to regression by modulating MSE with error magnitude
 # Higher gamma focuses training on hard examples (large prediction errors)
-FOCAL_GAMMA = 2.0        # Gamma parameter for focal MSE: |y-ŷ|^γ * (y-ŷ)²
+FOCAL_GAMMA = 3.0        # Gamma parameter for focal MSE: |y-ŷ|^γ * (y-ŷ)²
 
 # Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"

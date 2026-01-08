@@ -84,30 +84,33 @@ def visits_to_distribution(
 ) -> torch.Tensor:
     """
     Convert MCTS visit counts to probability distribution with optional sharpening.
-    
+
+    Supports multi-correct answers by ensuring that actions with identical visit counts
+    (and Q-values when using Q-weighting) receive exactly equal probabilities.
+
     Args:
         mcts_stats: List of dicts with 'action', 'visits', and optionally 'avg_value'
         action_mask: Boolean tensor [5] indicating valid actions
         temperature: Temperature for distribution sharpening (< 1.0 sharpens toward one-hot,
                      > 1.0 smooths toward uniform). Default 1.0 = no change.
         use_q_weights: If True, weight visits by their Q-values (avg_value from MCTS).
-                       This emphasizes actions that not only were explored but also 
+                       This emphasizes actions that not only were explored but also
                        had high value estimates.
-        
+
     Returns:
-        Target probability distribution [5]
+        Target probability distribution [5] where tied actions have equal probabilities
     """
     visits = torch.zeros(5)
     q_values = torch.zeros(5)
-    
+
     for stat in mcts_stats:
         action = stat['action']
         if 0 <= action < 5:
             visits[action] = stat['visits']
             q_values[action] = stat.get('avg_value', 0.0)
-    
+
     total_visits = visits.sum()
-    
+
     if total_visits > 0:
         if use_q_weights:
             # Weight visits by Q-value
@@ -118,25 +121,54 @@ def visits_to_distribution(
                 q_shifted = q_values - q_min + 0.1  # Ensure all positive
             else:
                 q_shifted = torch.ones(5)
-            
+
             # Weighted visits = visits * (shifted Q-value)
             weighted = visits * q_shifted
-            
-            # Apply temperature sharpening via log-softmax
-            log_weighted = torch.log(weighted + 1e-8)
-            probs = F.softmax(log_weighted / temperature, dim=-1)
+
+            # Group actions by their weighted values to handle ties explicitly
+            unique_weights, inverse_indices = torch.unique(weighted, return_inverse=True)
+            group_probs = torch.zeros_like(unique_weights)
+
+            for i, weight in enumerate(unique_weights):
+                group_mask = (weighted == weight)
+                group_visits = weighted[group_mask].sum()
+                if group_visits > 0:
+                    group_probs[i] = group_visits
+
+            # Apply temperature sharpening to group probabilities
+            if len(unique_weights) > 1:
+                log_group_probs = torch.log(group_probs + 1e-8)
+                group_probs = F.softmax(log_group_probs / temperature, dim=-1)
+
+            # Assign probabilities back to individual actions
+            probs = group_probs[inverse_indices]
         else:
-            # Standard visit-based distribution with temperature sharpening
-            log_visits = torch.log(visits + 1e-8)
-            probs = F.softmax(log_visits / temperature, dim=-1)
+            # Standard visit-based distribution with explicit tie handling
+            # Group actions by visit count to ensure ties get equal probabilities
+            unique_visits, inverse_indices = torch.unique(visits, return_inverse=True)
+            group_probs = torch.zeros_like(unique_visits)
+
+            for i, visit_count in enumerate(unique_visits):
+                group_mask = (visits == visit_count)
+                group_total = visit_count * group_mask.sum().float()
+                if group_total > 0:
+                    group_probs[i] = group_total
+
+            # Apply temperature sharpening to group probabilities
+            if len(unique_visits) > 1:
+                log_group_probs = torch.log(group_probs + 1e-8)
+                group_probs = F.softmax(log_group_probs / temperature, dim=-1)
+
+            # Assign probabilities back to individual actions
+            probs = group_probs[inverse_indices]
     else:
         # No visits - uniform over valid actions
         probs = torch.ones(5) / 5
-    
+
     # Apply action mask
     probs = probs * action_mask.float()
     prob_sum = probs.sum()
-    
+
     if prob_sum > 0:
         probs = probs / prob_sum
     else:
@@ -146,6 +178,6 @@ def visits_to_distribution(
             probs = action_mask.float() / valid_count
         else:
             probs = torch.ones(5) / 5
-    
+
     return probs
 

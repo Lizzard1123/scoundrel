@@ -130,10 +130,13 @@ def compute_metrics(
 
     # Compute accuracy with tie-aware handling
     # If multiple actions have equal max probability in target, any of them is correct
+    # Use tolerance for floating point comparisons to handle numerical precision issues
     pred_actions = torch.argmax(pred_probs, dim=-1)  # [batch_size]
     target_max_probs = target_probs.max(dim=-1)[0]  # [batch_size]
     # Find all actions that have the max probability (handles ties)
-    target_max_mask = (target_probs == target_max_probs.unsqueeze(-1))  # [batch_size, 5]
+    # Use small tolerance to account for floating point precision errors
+    tolerance = 1e-6
+    target_max_mask = (target_probs >= target_max_probs.unsqueeze(-1) - tolerance)  # [batch_size, 5]
     # Check if predicted action is among the tied max actions
     # Use gather to check if pred_actions index has max probability
     accuracy = target_max_mask.gather(1, pred_actions.unsqueeze(-1)).squeeze(-1).float().mean()

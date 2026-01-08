@@ -29,6 +29,7 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import (
     LR,
     MAX_GAMES,
     MAX_GRAD_NORM,
+    ONLY_WINNING_GAMES,
     STACK_SEQ_LEN,
     TEMPERATURE,
     TRAIN_VAL_SPLIT,
@@ -565,6 +566,7 @@ def train(
         num_workers=0,
         temperature=temperature,
         use_q_weights=use_q_weights,
+        only_winning_games=ONLY_WINNING_GAMES,
     )
     
     model = PolicyLargeNet(scalar_input_dim=scalar_input_dim).to(device)

@@ -45,6 +45,7 @@ FOCAL_GAMMA = 3.0        # Gamma parameter for focal MSE: |y-ŷ|^γ * (y-ŷ)²
 # Data
 DEFAULT_MCTS_LOGS_DIR = "scoundrel/rl/mcts/logs/collected_games"
 MAX_GAMES = None
+ONLY_WINNING_GAMES = True  # Only use winning games from MCTS data in training
 
 # Checkpointing
 CHECKPOINT_DIR = "checkpoints"

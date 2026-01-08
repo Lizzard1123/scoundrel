@@ -17,6 +17,7 @@ from scoundrel.models.card import Card, CardType
 from scoundrel.game.combat import Combat
 from scoundrel.rl.translator import ScoundrelTranslator
 from scoundrel.rl.utils import get_pin_memory
+from scoundrel.rl.alpha_scoundrel.policy.policy_large.constants import ONLY_WINNING_GAMES
 from scoundrel.rl.alpha_scoundrel.data_utils import (
     deserialize_game_state,
     visits_to_distribution,
@@ -180,6 +181,7 @@ class MCTSDataset(Dataset):
         max_games: Optional[int] = None,
         temperature: float = 1.0,
         use_q_weights: bool = False,
+        only_winning_games: bool = False,
     ):
         """
         Args:
@@ -191,11 +193,13 @@ class MCTSDataset(Dataset):
                         > 1.0 smooths toward uniform
                         1.0 = no change (default)
             use_q_weights: If True, weight visits by their Q-values from MCTS
+            only_winning_games: If True, only load games that were won (positive final_score)
         """
         self.log_dir = Path(log_dir)
         self.translator = translator
         self.temperature = temperature
         self.use_q_weights = use_q_weights
+        self.only_winning_games = only_winning_games
         self.samples: List[Tuple[
             torch.Tensor,  # scalar_features
             torch.Tensor,  # sequence_features
@@ -207,19 +211,26 @@ class MCTSDataset(Dataset):
             torch.Tensor,  # target_probs
             torch.Tensor,  # action_mask
         ]] = []
-        
+
         log_files = sorted(self.log_dir.glob("*.json"))
         if max_games is not None:
             log_files = log_files[:max_games]
-        
+
         print(f"Loading {len(log_files)} game log files...")
-        print(f"  Temperature: {temperature}, Use Q-weights: {use_q_weights}")
+        print(f"  Temperature: {temperature}, Use Q-weights: {use_q_weights}, Only winning games: {only_winning_games}")
         
         for log_file in log_files:
             try:
                 with open(log_file, 'r') as f:
                     game_data = json.load(f)
-                
+
+                # Filter for winning games if requested
+                if only_winning_games:
+                    metadata = game_data.get("metadata", {})
+                    final_score = metadata.get("final_score", 0)
+                    if final_score <= 0:
+                        continue  # Skip non-winning games
+
                 events = game_data.get("events", [])
                 for event in events:
                     try:
@@ -280,10 +291,11 @@ def create_dataloaders(
     num_workers: int = 0,
     temperature: float = 1.0,
     use_q_weights: bool = False,
+    only_winning_games: bool = ONLY_WINNING_GAMES,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and validation dataloaders from MCTS logs.
-    
+
     Args:
         log_dir: Directory containing MCTS log JSON files
         translator: ScoundrelTranslator for encoding states
@@ -293,16 +305,18 @@ def create_dataloaders(
         num_workers: Number of worker processes for data loading
         temperature: Temperature for sharpening target distributions (< 1.0 sharpens)
         use_q_weights: If True, weight visits by their Q-values from MCTS
-        
+        only_winning_games: If True, only load games that were won (positive final_score)
+
     Returns:
         Tuple of (train_loader, val_loader)
     """
     full_dataset = MCTSDataset(
-        log_dir, 
-        translator, 
+        log_dir,
+        translator,
         max_games=max_games,
         temperature=temperature,
-        use_q_weights=use_q_weights
+        use_q_weights=use_q_weights,
+        only_winning_games=only_winning_games
     )
     
     if len(full_dataset) == 0:

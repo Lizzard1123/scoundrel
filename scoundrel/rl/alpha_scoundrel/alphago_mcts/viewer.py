@@ -130,6 +130,10 @@ def run_alphago_viewer(
     
     def get_alphago_action(state: GameState) -> tuple:
         """Get AlphaGo MCTS action and return with stats."""
+        # Game should not be over when agent is asked for action
+        if state.game_over:
+            raise ValueError("Cannot get action when game is over")
+
         try:
             action_idx = agent.select_action(state)
             action_enum = agent.translator.decode_action(action_idx)
@@ -141,7 +145,7 @@ def run_alphago_viewer(
             print("Falling back to first valid action...")
             # Just take first card
             from scoundrel.models.game_state import Action
-            return Action.CARD_1, (0, {})
+            return Action.USE_1, (0, {})
     
     try:
         run_interactive_viewer(

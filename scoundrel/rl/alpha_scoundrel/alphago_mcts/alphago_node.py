@@ -73,12 +73,12 @@ class AlphaGoNode:
         sqrt_parent_visits = math.sqrt(self.visits)
         
         for child in self.children:
-            # Handle unvisited nodes (give them highest priority)
-            if child.visits == 0:
-                return child
-            
             # Exploitation term: Q(s,a) = mean value
-            q_value = child.value / child.visits
+            # Handle unvisited nodes with FPU (First Play Urgency) of 0.5 (midpoint reward)
+            if child.visits > 0:
+                q_value = child.value / child.visits
+            else:
+                q_value = 0.5
             
             # Exploration term: c_puct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
             # P(s,a) comes from policy network priors
@@ -136,6 +136,8 @@ class AlphaGoNode:
     
     def most_visited_child(self) -> 'AlphaGoNode':
         """Return the child with the most visits (used for final action selection)."""
+        if not self.children:
+            raise ValueError("Cannot select most visited child: no children available")
         return max(self.children, key=lambda c: c.visits)
     
     def update(self, reward: float):

@@ -220,6 +220,7 @@ def generate_self_play_games(
             value_checkpoint=str(value_checkpoint) if value_checkpoint else None,
             num_simulations=num_simulations,
             num_workers=num_workers,  # Internal MCTS root parallelization
+            add_dirichlet_noise=True, # Enable exploration noise for self-play
         )
         if verbose:
             print(f"Agent loaded on device: {agent.device}")

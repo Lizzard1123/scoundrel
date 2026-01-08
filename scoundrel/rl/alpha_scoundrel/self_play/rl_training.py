@@ -62,9 +62,13 @@ def compute_policy_gradient_loss(
     # Get log probability of the action taken
     action_log_probs = log_probs.gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
-    # Policy gradient loss: -log(π(a|s)) * R
+    # Variance Reduction: Subtract baseline (batch mean)
+    # This centers the returns, reducing gradient variance especially with small batch sizes
+    advantages = rewards - rewards.mean()
+
+    # Policy gradient loss: -log(π(a|s)) * (R - b)
     # Negative because we want to maximize expected reward
-    policy_loss = -(action_log_probs * rewards).mean()
+    policy_loss = -(action_log_probs * advantages).mean()
 
     # Entropy bonus to encourage exploration
     probs = F.softmax(masked_logits, dim=-1)

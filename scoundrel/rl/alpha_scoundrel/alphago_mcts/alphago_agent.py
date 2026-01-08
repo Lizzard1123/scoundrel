@@ -41,6 +41,8 @@ from scoundrel.rl.alpha_scoundrel.alphago_mcts.constants import (
     POLICY_LARGE_CHECKPOINT,
     POLICY_SMALL_CHECKPOINT,
     VALUE_LARGE_CHECKPOINT,
+    DIRICHLET_ALPHA,
+    DIRICHLET_EPSILON,
 )
 from scoundrel.rl.alpha_scoundrel.policy.policy_large.inference import PolicyLargeInference
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.inference import PolicySmallInference
@@ -149,7 +151,8 @@ class AlphaGoAgent:
         value_weight: float = ALPHAGO_VALUE_WEIGHT,
         max_depth: int = ALPHAGO_MAX_DEPTH,
         num_workers: int = ALPHAGO_NUM_WORKERS,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        add_dirichlet_noise: bool = False,
     ):
         """
         Initialize AlphaGo MCTS agent with three neural networks.
@@ -164,6 +167,7 @@ class AlphaGoAgent:
             max_depth: Maximum rollout depth
             num_workers: Number of parallel workers (0 or 1 = sequential)
             device: Device for neural networks ("cpu", "cuda", "mps")
+            add_dirichlet_noise: Whether to add exploration noise to root node
         """
         # Resolve checkpoint paths (relative to alpha_scoundrel/)
         alpha_scoundrel_dir = Path(__file__).parent.parent
@@ -185,6 +189,7 @@ class AlphaGoAgent:
                 device = "cpu"
         
         self.device = device
+        self.add_dirichlet_noise = add_dirichlet_noise
         
         # Load neural networks
         self.policy_large = PolicyLargeInference(
@@ -259,6 +264,10 @@ class AlphaGoAgent:
         
         # Get policy priors for root (critical for PUCT)
         self._add_policy_priors(root, game_state)
+
+        # Add Dirichlet noise to root if enabled (AlphaGo Zero exploration)
+        if self.add_dirichlet_noise:
+            self._add_dirichlet_noise(root)
         
         for _ in range(self.num_simulations):
             # Determinize hidden information (shuffle unknown dungeon cards)
@@ -278,6 +287,35 @@ class AlphaGoAgent:
             self._backpropagate(node, value)
         
         return root
+
+    def _add_dirichlet_noise(self, node: AlphaGoNode):
+        """
+        Add Dirichlet noise to the policy priors of the node.
+        
+        P(s,a) = (1 - ε) * P(s,a) + ε * η
+        where η ~ Dirichlet(α)
+        
+        This encourages exploration during self-play training.
+        
+        Args:
+            node: The node to add noise to (usually root)
+        """
+        if node.prior_probs is None:
+            return
+
+        # Create Dirichlet distribution
+        # Use concentration alpha from constants
+        alpha = torch.full((len(node.prior_probs),), DIRICHLET_ALPHA)
+        dist = torch.distributions.Dirichlet(alpha)
+        noise = dist.sample()
+        
+        # Move noise to correct device if needed
+        if node.prior_probs.device != noise.device:
+            noise = noise.to(node.prior_probs.device)
+            
+        # Mix noise
+        # P' = (1 - eps) * P + eps * noise
+        node.prior_probs = (1 - DIRICHLET_EPSILON) * node.prior_probs + DIRICHLET_EPSILON * noise
     
     def _select(self, node: AlphaGoNode, game_state: GameState) -> Tuple[AlphaGoNode, GameState]:
         """
@@ -328,8 +366,21 @@ class AlphaGoAgent:
         if game_state.game_over or len(node.untried_actions) == 0:
             return node, game_state
         
-        # Select untried action (can be random or based on priors)
-        action = random.choice(node.untried_actions)
+        # Select untried action
+        # IMPROVED: Use policy priors to pick the most promising untried action first
+        # This guides expansion towards high-probability moves (AlphaGo style)
+        if node.prior_probs is not None:
+            # Find untried action with highest prior prob
+            # untried_actions is a list of action indices
+            # prior_probs is a tensor [ACTION_SPACE]
+            
+            # Filter priors for untried actions
+            best_action = max(node.untried_actions, key=lambda a: node.prior_probs[a].item())
+            action = best_action
+        else:
+            # Fallback to random if no priors
+            action = random.choice(node.untried_actions)
+            
         node.untried_actions.remove(action)
         
         # Apply action
@@ -412,10 +463,11 @@ class AlphaGoAgent:
     
     def _rollout(self, game_state: GameState) -> float:
         """
-        Fast rollout using PolicySmall network.
+        Fast rollout using PolicySmall network with probabilistic sampling.
         
-        Much faster than PolicyLarge (single FC layer vs 10 layers).
-        Trades accuracy for speed in simulation phase.
+        Uses the learned policy (approx 50% accuracy) but samples from the 
+        probability distribution to ensure exploration and diversity in rollouts,
+        preventing the agent from getting stuck in deterministic loops.
         
         Args:
             game_state: Starting game state
@@ -427,8 +479,15 @@ class AlphaGoAgent:
         depth = 0
         
         while depth < self.max_depth and not current_state.game_over:
-            # Use fast policy network for action selection
-            action_enum, _ = self.policy_small(current_state)
+            # Get action probabilities from PolicySmall
+            # Note: get_probs returns CPU tensor
+            probs = self.policy_small.get_probs(current_state)
+            
+            # Sample from the distribution instead of argmax
+            # This adds necessary noise/exploration for MCTS rollouts
+            action_idx = torch.multinomial(probs, num_samples=1).item()
+            
+            action_enum = self.translator.decode_action(action_idx)
             current_state = apply_action_to_state(current_state, action_enum)
             depth += 1
         

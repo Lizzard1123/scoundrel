@@ -121,14 +121,19 @@ def run_interactive_viewer(
         while not state.exit:
             try:
                 action_enum, extra_info = get_action_fn(state)
+                ui_text = format_ui_text_fn(action_enum, extra_info)
+            except ValueError as e:
+                if "game is over" in str(e).lower():
+                    # Game is over, show end-game message
+                    ui_text = "Game Over | Press 'R' to restart or 'E' to exit"
+                else:
+                    raise
             except (KeyboardInterrupt, EOFError):
                 engine.execute_turn(Action.EXIT)
                 state = engine.get_state()
                 break
-            
-            ui_text = format_ui_text_fn(action_enum, extra_info)
-            
-            if state.game_over:
+
+            if state.game_over and not ui_text.startswith("Game Over"):
                 ui_text += " | Press 'R' to restart or 'E' to exit"
             
             actions_title = get_title_fn(state)

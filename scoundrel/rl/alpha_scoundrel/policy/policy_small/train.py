@@ -1,5 +1,16 @@
+"""
+Training script for Policy Small with Advanced Features.
+
+Features:
+- Hybrid loss with focal MSE and hard classification
+- Gradient clipping and dropout regularization
+- Temperature sharpening for target distributions
+- Learning rate scheduling (warmup + cosine decay)
+"""
+
 import argparse
 import torch
+import math
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from typing import Optional, Dict
@@ -12,11 +23,19 @@ from scoundrel.rl.alpha_scoundrel.policy.policy_small.constants import (
     CHECKPOINT_INTERVAL,
     CHECKPOINT_PREFIX,
     DEFAULT_MCTS_LOGS_DIR,
+    DROPOUT_RATE,
     EPOCHS,
+    FOCAL_GAMMA,
+    HARD_LOSS_WEIGHT,
     LR,
     MAX_GAMES,
+    MAX_GRAD_NORM,
+    MIN_LR_RATIO,
     STACK_SEQ_LEN,
+    TEMPERATURE,
     TRAIN_VAL_SPLIT,
+    USE_Q_WEIGHTS,
+    WARMUP_EPOCHS,
 )
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.network import PolicySmallNet
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.data_loader import create_dataloaders
@@ -27,6 +46,40 @@ from scoundrel.rl.alpha_scoundrel.policy.training_utils import (
     compute_metrics,
     compute_gradient_norm,
 )
+
+
+def get_lr_scheduler(optimizer, warmup_epochs: int, total_epochs: int, min_lr_ratio: float = 1.0):
+    """
+    Create learning rate scheduler.
+
+    If warmup_epochs=0 and min_lr_ratio=1.0, returns constant LR.
+    Otherwise uses warmup + cosine decay.
+
+    Args:
+        optimizer: PyTorch optimizer
+        warmup_epochs: Number of warmup epochs (0 for no warmup)
+        total_epochs: Total training epochs
+        min_lr_ratio: Minimum LR as ratio of initial LR (1.0 for constant)
+
+    Returns:
+        LambdaLR scheduler
+    """
+    def lr_lambda(epoch):
+        # Constant LR if no warmup and no decay
+        if warmup_epochs == 0 and min_lr_ratio >= 1.0:
+            return 1.0
+
+        if epoch < warmup_epochs:
+            # Linear warmup
+            return (epoch + 1) / max(1, warmup_epochs)
+        else:
+            # Cosine decay (or constant if min_lr_ratio == 1.0)
+            if min_lr_ratio >= 1.0:
+                return 1.0
+            progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def _save_training_summary(
@@ -125,7 +178,10 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     writer: Optional[SummaryWriter] = None,
-    epoch: int = 0
+    epoch: int = 0,
+    hard_loss_weight: float = 1.0,
+    focal_gamma: float = 2.0,
+    max_grad_norm: float = 1.0
 ) -> Dict[str, float]:
     """
     Train for one epoch with comprehensive logging.
@@ -153,16 +209,23 @@ def train_epoch(
         
         scalar_features = scalar_features.to(device)
         stack_sums = stack_sums.to(device)
-        total_stats = total_stats.to(device)
         target_probs = target_probs.to(device)
         action_mask = action_mask.to(device)
         
-        logits = model(scalar_features, stack_sums, total_stats)
-        loss = compute_loss(logits, target_probs, action_mask)
+        logits = model(scalar_features, stack_sums)
+        loss = compute_loss(
+            logits, target_probs, action_mask,
+            hard_loss_weight=hard_loss_weight,
+            focal_gamma=focal_gamma
+        )
         
         optimizer.zero_grad()
         loss.backward()
+
+        # Gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         grad_norm = compute_gradient_norm(model)
+
         optimizer.step()
         
         batch_size = scalar_features.size(0)
@@ -199,7 +262,7 @@ def train_epoch(
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, stack_sums, total_stats)
+            logits = model(scalar_features, stack_sums)
             metrics = compute_metrics(logits, target_probs, action_mask)
             epoch_accuracy += metrics['accuracy'] * scalar_features.size(0)
     epoch_accuracy = epoch_accuracy / total_samples if total_samples > 0 else 0.0
@@ -257,7 +320,7 @@ def validate(
             target_probs = target_probs.to(device)
             action_mask = action_mask.to(device)
             
-            logits = model(scalar_features, stack_sums, total_stats)
+            logits = model(scalar_features, stack_sums)
             loss = compute_loss(logits, target_probs, action_mask)
             
             metrics = compute_metrics(
@@ -333,10 +396,18 @@ def train(
     max_games: Optional[int] = MAX_GAMES,
     tensorboard: bool = True,
     train_val_split: float = TRAIN_VAL_SPLIT,
+    temperature: float = TEMPERATURE,
+    use_q_weights: bool = USE_Q_WEIGHTS,
+    hard_loss_weight: float = HARD_LOSS_WEIGHT,
+    focal_gamma: float = FOCAL_GAMMA,
+    dropout_rate: float = DROPOUT_RATE,
+    max_grad_norm: float = MAX_GRAD_NORM,
+    warmup_epochs: int = WARMUP_EPOCHS,
+    min_lr_ratio: float = MIN_LR_RATIO,
 ):
     """
-    Main training function with comprehensive logging.
-    
+    Main training function with advanced features.
+
     Args:
         mcts_logs_dir: Directory containing MCTS log JSON files
         batch_size: Batch size for training
@@ -347,6 +418,14 @@ def train(
         max_games: Maximum number of games to load (None = all)
         tensorboard: Whether to enable TensorBoard logging
         train_val_split: Fraction of data for training
+        temperature: Temperature for sharpening target distributions (< 1.0 sharpens)
+        use_q_weights: Whether to weight visits by Q-values from MCTS
+        hard_loss_weight: Weight for hard classification loss (0.0 = pure soft loss)
+        focal_gamma: Gamma parameter for focal MSE loss
+        dropout_rate: Dropout rate for regularization
+        max_grad_norm: Maximum gradient norm for clipping
+        warmup_epochs: Number of warmup epochs for learning rate
+        min_lr_ratio: Minimum learning rate ratio for decay
     """
     device = get_device()
     print(f"Using device: {device}")
@@ -401,10 +480,18 @@ def train(
         train_val_split=train_val_split,
         max_games=max_games,
         num_workers=0,
+        temperature=temperature,
+        use_q_weights=use_q_weights,
     )
     
-    model = PolicySmallNet(scalar_input_dim=scalar_input_dim).to(device)
+    model = PolicySmallNet(
+        scalar_input_dim=scalar_input_dim,
+        dropout_rate=dropout_rate
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # Create learning rate scheduler
+    scheduler = get_lr_scheduler(optimizer, warmup_epochs, epochs, min_lr_ratio)
     
     if writer:
         total_params = sum(p.numel() for p in model.parameters())
@@ -414,9 +501,8 @@ def train(
         
         dummy_scalar_tensor = dummy_scalar.to(device)
         dummy_stack_sums = torch.zeros((1, 3)).to(device)
-        dummy_total_stats = torch.zeros((1, 3)).to(device)
         try:
-            writer.add_graph(model, (dummy_scalar_tensor, dummy_stack_sums, dummy_total_stats))
+            writer.add_graph(model, (dummy_scalar_tensor, dummy_stack_sums))
         except Exception as e:
             print(f"Warning: Could not log model graph: {e}")
     
@@ -446,7 +532,12 @@ def train(
     
     try:
         for epoch in range(start_epoch, epochs):
-            train_metrics = train_epoch(model, train_loader, optimizer, device, writer, epoch)
+            train_metrics = train_epoch(
+                model, train_loader, optimizer, device, writer, epoch,
+                hard_loss_weight=hard_loss_weight,
+                focal_gamma=focal_gamma,
+                max_grad_norm=max_grad_norm
+            )
             val_metrics = validate(model, val_loader, device, writer, epoch)
             
             # Track final metrics
@@ -461,6 +552,9 @@ def train(
                   f"Val Acc: {val_metrics['accuracy']:.4f}, "
                   f"Speed: {train_metrics['samples_per_sec']:.1f} samples/sec")
             
+            # Step the learning rate scheduler
+            scheduler.step()
+
             if (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == epochs:
                 checkpoint_path = checkpoint_dir / f"{CHECKPOINT_PREFIX}{epoch+1}.pt"
                 torch.save({
@@ -544,7 +638,54 @@ def main():
         action="store_true",
         help="Disable TensorBoard logging"
     )
-    
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=TEMPERATURE,
+        help=f"Temperature for sharpening target distributions (default: {TEMPERATURE})"
+    )
+    parser.add_argument(
+        "--use-q-weights",
+        action="store_true",
+        help="Weight visits by their Q-values from MCTS"
+    )
+    parser.add_argument(
+        "--hard-loss-weight",
+        type=float,
+        default=HARD_LOSS_WEIGHT,
+        help=f"Weight for hard classification loss (default: {HARD_LOSS_WEIGHT})"
+    )
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=FOCAL_GAMMA,
+        help=f"Gamma parameter for focal MSE loss (default: {FOCAL_GAMMA})"
+    )
+    parser.add_argument(
+        "--dropout-rate",
+        type=float,
+        default=DROPOUT_RATE,
+        help=f"Dropout rate for regularization (default: {DROPOUT_RATE})"
+    )
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=MAX_GRAD_NORM,
+        help=f"Maximum gradient norm for clipping (default: {MAX_GRAD_NORM})"
+    )
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=WARMUP_EPOCHS,
+        help=f"Number of warmup epochs for learning rate (default: {WARMUP_EPOCHS})"
+    )
+    parser.add_argument(
+        "--min-lr-ratio",
+        type=float,
+        default=MIN_LR_RATIO,
+        help=f"Minimum learning rate ratio for decay (default: {MIN_LR_RATIO})"
+    )
+
     args = parser.parse_args()
     
     train(
@@ -556,6 +697,14 @@ def main():
         resume_from=Path(args.resume_from) if args.resume_from else None,
         max_games=args.max_games,
         tensorboard=not args.no_tensorboard,
+        temperature=args.temperature,
+        use_q_weights=args.use_q_weights,
+        hard_loss_weight=args.hard_loss_weight,
+        focal_gamma=args.focal_gamma,
+        dropout_rate=args.dropout_rate,
+        max_grad_norm=args.max_grad_norm,
+        warmup_epochs=args.warmup_epochs,
+        min_lr_ratio=args.min_lr_ratio,
     )
 
 

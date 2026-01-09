@@ -10,6 +10,7 @@ Implements iterative self-play training with REINFORCE policy gradients:
 """
 
 import argparse
+import multiprocessing as mp
 import shutil
 import time
 from datetime import datetime
@@ -312,6 +313,396 @@ def _train_value_network(
     return final_metrics
 
 
+def _evaluate_single_game_worker_with_progress(
+    worker_id: int,
+    game_num: int,
+    base_seed: int,
+    policy_checkpoint: str,
+    value_checkpoint: str,
+    num_simulations: int,
+    num_workers: int,
+    progress_queue,
+    result_queue,
+) -> None:
+    """
+    Worker function for parallel evaluation of a single game with progress updates.
+
+    Args:
+        worker_id: Unique identifier for this worker
+        game_num: Game number (used for seed offset)
+        base_seed: Base seed for reproducibility
+        policy_checkpoint: Path to policy checkpoint
+        value_checkpoint: Path to value checkpoint
+        num_simulations: MCTS simulations per move
+        num_workers: MCTS internal workers
+        progress_queue: Queue for sending progress updates
+        result_queue: Queue for sending final results
+    """
+    try:
+        from scoundrel.game.game_manager import GameManager
+        from scoundrel.rl.alpha_scoundrel.alphago_mcts.alphago_agent import AlphaGoAgent
+
+        engine_seed = base_seed + game_num
+        engine = GameManager(seed=engine_seed)
+
+        agent = AlphaGoAgent(
+            policy_large_checkpoint=policy_checkpoint,
+            value_checkpoint=value_checkpoint,
+            num_simulations=num_simulations,
+            num_workers=num_workers,
+        )
+
+        # Send initial progress update
+        progress_queue.put(('start', worker_id, engine_seed, 0))
+
+        state = engine.restart()
+        turn = 0
+
+        while not state.game_over:
+            # Send progress update for current turn
+            progress_queue.put(('turn', worker_id, engine_seed, turn))
+
+            action_idx = agent.select_action(state)
+            action_enum = agent.translator.decode_action(action_idx)
+
+            engine.execute_turn(action_enum)
+            state = engine.get_state()
+
+            turn += 1
+
+        final_score = state.score
+
+        # Send completion update
+        progress_queue.put(('complete', worker_id, engine_seed, turn))
+
+        # Send result
+        result_queue.put({
+            'worker_id': worker_id,
+            'game_num': game_num,
+            'game_seed': engine_seed,
+            'score': final_score,
+            'success': True,
+        })
+
+    except Exception as e:
+        # Send error result
+        result_queue.put({
+            'worker_id': worker_id,
+            'game_num': game_num,
+            'game_seed': base_seed + game_num,
+            'error': str(e),
+            'success': False,
+        })
+
+
+def _evaluate_single_game_worker(
+    game_num: int,
+    base_seed: int,
+    policy_checkpoint: str,
+    value_checkpoint: str,
+    num_simulations: int,
+    num_workers: int,
+) -> int:
+    """
+    Worker function for parallel evaluation of a single game.
+
+    Args:
+        game_num: Game number (used for seed offset)
+        base_seed: Base seed for reproducibility
+        policy_checkpoint: Path to policy checkpoint
+        value_checkpoint: Path to value checkpoint
+        num_simulations: MCTS simulations per move
+        num_workers: MCTS internal workers
+
+    Returns:
+        Game score
+    """
+    from scoundrel.game.game_manager import GameManager
+    from scoundrel.rl.alpha_scoundrel.alphago_mcts.alphago_agent import AlphaGoAgent
+
+    engine_seed = base_seed + game_num
+    engine = GameManager(seed=engine_seed)
+
+    agent = AlphaGoAgent(
+        policy_large_checkpoint=policy_checkpoint,
+        value_checkpoint=value_checkpoint,
+        num_simulations=num_simulations,
+        num_workers=num_workers,
+    )
+
+    state = engine.restart()
+    while not state.game_over:
+        action_idx = agent.select_action(state)
+        action_enum = agent.translator.decode_action(action_idx)
+        engine.execute_turn(action_enum)
+        state = engine.get_state()
+
+    return state.score
+
+
+def _evaluate_agent_parallel(
+    policy_checkpoint: Optional[Path],
+    value_checkpoint: Optional[Path],
+    num_games: int = EVAL_GAMES,
+    seed: int = EVAL_SEED,
+    num_parallel_games: int = SELF_PLAY_PARALLEL_GAMES,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """
+    Evaluate an AlphaGo agent using parallel game execution.
+
+    Args:
+        policy_checkpoint: Path to policy network checkpoint
+        value_checkpoint: Path to value network checkpoint
+        num_games: Total number of games to evaluate (EVAL_GAMES)
+        seed: Base seed for reproducibility
+        num_parallel_games: Number of games to run simultaneously (SELF_PLAY_PARALLEL_GAMES)
+        verbose: Whether to print live progress with AlphaGo MCTS collection format
+
+    Returns:
+        Dictionary with evaluation results
+    """
+    try:
+        # Convert Path objects to strings for multiprocessing
+        policy_path = str(policy_checkpoint) if policy_checkpoint else None
+        value_path = str(value_checkpoint) if value_checkpoint else None
+
+        scores = []
+        wins = 0
+
+        # Use multiprocessing with queues for progress tracking (like game generation)
+        progress_queue = mp.Queue()
+        result_queue = mp.Queue()
+
+        if verbose:
+            print("=== AlphaGo Self-Play Evaluation ===")
+            print(f"Running {num_games} evaluation games using {num_parallel_games} parallel workers...")
+            print(f"AlphaGo MCTS configuration:")
+            print(f"  Simulations per move: {EVAL_SIMULATIONS}")
+            print(f"  Internal MCTS workers: {SELF_PLAY_NUM_WORKERS}")
+            print(f"  Policy checkpoint: {policy_checkpoint}")
+            print(f"  Value checkpoint: {value_checkpoint}")
+            print()
+
+        # Track evaluation progress
+        actual_completed_games = 0
+        next_game_num = 0
+        scores = [None] * num_games
+        active_games = {}  # worker_id -> (game_seed, start_time, current_turn)
+        completed_game_history = []  # List of (game_seed, score, game_num) tuples
+
+        # Create worker processes
+        available_workers = list(range(num_parallel_games))
+        active_processes = {}  # worker_id -> process
+
+        def start_new_game(worker_id: int) -> bool:
+            """Start a new evaluation game for the given worker. Returns False if no more games to start."""
+            nonlocal next_game_num
+
+            if next_game_num >= num_games:
+                return False
+
+            game_num = next_game_num
+            next_game_num += 1
+            game_seed = seed + game_num
+
+            # Start process for this evaluation game
+            process = mp.Process(
+                target=_evaluate_single_game_worker_with_progress,
+                args=(worker_id, game_num, seed, policy_path, value_path, EVAL_SIMULATIONS, SELF_PLAY_NUM_WORKERS, progress_queue, result_queue)
+            )
+            process.start()
+            active_processes[worker_id] = process
+
+            return True
+
+        def print_verbose_status():
+            """Print the current status with history and active games - exact format from AlphaGo MCTS collection."""
+            # Clear screen and move cursor to top
+            print("\033[2J\033[H", end="")  # Clear screen and move to top
+
+            # Print header
+            print("=== AlphaGo Self-Play Evaluation ===")
+            print(f"Output: evaluation")
+            print(f"Parallel games: {num_parallel_games} | Completed: {len(completed_game_history)}")
+            if num_games is not None:
+                print(f"Target: {num_games} games")
+            print()
+
+            # Print completed games history (last 10)
+            if completed_game_history:
+                print("=== Completed Games ===")
+                for i, (game_seed, score, worker_id) in enumerate(completed_game_history[-10:]):  # Show last 10
+                    status = "WIN" if score > 0 else "LOSE"
+                    color = "\033[92m" if score > 0 else "\033[91m"  # Green for win, red for loss
+                    print(f"{color}Game {game_seed}: {status} Score={score}, Worker={worker_id}\033[0m")
+                if len(completed_game_history) > 10:
+                    print(f"... and {len(completed_game_history) - 10} more")
+                print()
+
+            # Print active games
+            if active_games:
+                print("=== Active Games ===")
+                for worker_id, (game_seed, start_time, current_turn) in active_games.items():
+                    elapsed = time.time() - start_time
+                    color = "\033[94m"  # Blue for active
+                    print(f"{color}Worker {worker_id}: Game {game_seed}, Turn {current_turn}, {elapsed:.1f}s\033[0m")
+                print()
+
+        try:
+            # Start initial batch of games
+            for worker_id in available_workers[:]:
+                if not start_new_game(worker_id):
+                    available_workers.remove(worker_id)
+
+            # Main evaluation loop
+            while active_processes or actual_completed_games < num_games:
+                # Check for progress updates
+                while not progress_queue.empty():
+                    try:
+                        msg_type, worker_id, game_seed, data = progress_queue.get_nowait()
+
+                        if msg_type == 'start':
+                            active_games[worker_id] = (game_seed, time.time(), 0)
+                        elif msg_type == 'turn':
+                            if worker_id in active_games:
+                                _, start_time, _ = active_games[worker_id]
+                                active_games[worker_id] = (game_seed, start_time, data)
+                        elif msg_type == 'complete':
+                            if worker_id in active_games:
+                                del active_games[worker_id]
+                    except:
+                        pass
+
+                # Check for completed results
+                while not result_queue.empty():
+                    try:
+                        result = result_queue.get_nowait()
+
+                        actual_completed_games += 1
+
+                        if result['success']:
+                            game_num = result['game_num']
+                            scores[game_num] = result['score']
+                            completed_game_history.append((
+                                result['game_seed'],
+                                result['score'],
+                                result['worker_id']
+                            ))
+                        else:
+                            # Handle failed games
+                            game_num = result.get('game_num', 0)
+                            scores[game_num] = 0  # Default to loss
+                            completed_game_history.append((
+                                result.get('game_seed', seed + game_num),
+                                0,
+                                result['worker_id']
+                            ))
+
+                        # Clean up finished process
+                        if result['worker_id'] in active_processes:
+                            active_processes[result['worker_id']].join()
+                            del active_processes[result['worker_id']]
+
+                        # Start new game for this worker if more games needed
+                        if actual_completed_games < num_games:
+                            start_new_game(result['worker_id'])
+
+                    except:
+                        pass
+
+                if verbose:
+                    print_verbose_status()
+
+                time.sleep(0.1)
+
+        except KeyboardInterrupt:
+            if verbose:
+                print("\nInterrupted by user. Terminating processes...")
+            # Terminate all active processes
+            for process in active_processes.values():
+                process.terminate()
+            for process in active_processes.values():
+                process.join()
+
+        # Wait for any remaining processes
+        for process in active_processes.values():
+            process.join()
+
+        if verbose:
+            print_verbose_status()  # Final status update
+            print("=== Evaluation Complete ===")
+            wins = sum(1 for score in scores if score > 0)
+            win_percentage = (wins / num_games) * 100.0 if num_games > 0 else 0.0
+            average_score = sum(scores) / num_games if num_games > 0 else 0.0
+            print(f"Games: {num_games}")
+            print(f"Wins: {wins} ({win_percentage:.2f}%)")
+            print(f"Average Score: {average_score:.2f}")
+            print(f"Best Score: {max(scores) if scores else 0}")
+            print(f"Worst Score: {min(scores) if scores else 0}")
+            print()
+
+        # Calculate statistics
+        wins = sum(1 for score in scores if score > 0)
+        win_percentage = (wins / num_games) * 100.0 if num_games > 0 else 0.0
+
+        total_score = sum(scores)
+        average_score = total_score / num_games if num_games > 0 else 0.0
+
+        best_score = max(scores) if scores else 0
+        worst_score = min(scores) if scores else 0
+
+        return {
+            "num_games": num_games,
+            "wins": wins,
+            "win_percentage": win_percentage,
+            "average_score": average_score,
+            "best_score": best_score,
+            "worst_score": worst_score,
+            "total_score": total_score,
+            "scores": scores,
+        }
+
+    except Exception as e:
+        if verbose:
+            print(f"Parallel evaluation failed: {e}")
+        return {
+            "num_games": 0,
+            "wins": 0,
+            "win_percentage": 0,
+            "average_score": 0,
+            "best_score": 0,
+            "worst_score": 0,
+            "total_score": 0,
+            "scores": [],
+        }
+
+
+def print_evaluation_results(results: dict, show_individual_games: bool = True):
+    """Print self-play evaluation results in formatted output."""
+    print(f"\n=== Self-Play AlphaGo MCTS Evaluation Results ===")
+    print(f"Configuration:")
+    print(f"  Simulations per move: {EVAL_SIMULATIONS}")
+    print(f"  Internal MCTS workers: {SELF_PLAY_NUM_WORKERS}")
+    print(f"  Parallel games: {SELF_PLAY_PARALLEL_GAMES}")
+    print(f"\nResults:")
+    print(f"  Games Played: {results['num_games']}")
+    print(f"  Wins: {results['wins']}")
+    print(f"  Win Percentage: {results['win_percentage']:.2f}%")
+    print(f"  Average Score: {results['average_score']:.2f}")
+    print(f"  Best Score: {results['best_score']}")
+    print(f"  Worst Score: {results['worst_score']}")
+    print(f"  Total Score: {results['total_score']}")
+
+    # Show individual game results with colors
+    if show_individual_games and 'scores' in results:
+        print(f"\nIndividual Games:")
+        for game_num, score in enumerate(results['scores']):
+            status = "WIN" if score > 0 else "LOSE"
+            color = "\033[92m" if score > 0 else "\033[91m"  # Green for win, red for loss
+            print(f"{color}Game {game_num + 1}: {status} Score={score}\033[0m")
+
+
 def _evaluate_agent(
     policy_checkpoint: Optional[Path],
     value_checkpoint: Optional[Path],
@@ -319,37 +710,15 @@ def _evaluate_agent(
     seed: int = EVAL_SEED,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """Evaluate an AlphaGo agent."""
-    try:
-        agent = AlphaGoAgent(
-            policy_large_checkpoint=policy_checkpoint,
-            value_checkpoint=value_checkpoint,
-            num_simulations=EVAL_SIMULATIONS,
-            num_workers=SELF_PLAY_NUM_WORKERS,
-        )
-
-        results = run_evaluation(
-            agent=agent,
-            num_games=num_games,
-            seed=seed,
-            verbose=verbose
-        )
-
-        return results
-
-    except Exception as e:
-        print(f"Evaluation failed: {e}")
-        return {
-            "num_games": 0,
-            "wins": 0,
-            "win_percentage": 0.0,
-            "average_score": 0.0,
-            "best_score": 0,
-            "worst_score": 0,
-            "total_score": 0,
-            "scores": [],
-            "error": str(e),
-        }
+    """Evaluate an AlphaGo agent using parallel game execution with live progress display."""
+    return _evaluate_agent_parallel(
+        policy_checkpoint=policy_checkpoint,
+        value_checkpoint=value_checkpoint,
+        num_games=num_games,
+        seed=seed,
+        num_parallel_games=SELF_PLAY_PARALLEL_GAMES,
+        verbose=verbose,
+    )
 
 
 def run_self_play_training(
@@ -466,6 +835,10 @@ def run_self_play_training(
             seed=EVAL_SEED,
             verbose=verbose,
         )
+
+        if verbose:
+            print_evaluation_results(baseline_results, show_individual_games=True)
+
         best_eval_score = baseline_results['average_score']
         if verbose:
             print(f"Baseline score established: {best_eval_score:.2f}")
@@ -579,6 +952,9 @@ def run_self_play_training(
                 seed=EVAL_SEED,
                 verbose=verbose,
             )
+
+            if verbose:
+                print_evaluation_results(eval_results, show_individual_games=False)
 
             if writer:
                 writer.add_scalar('Evaluation/WinPercentage', eval_results['win_percentage'], iteration)

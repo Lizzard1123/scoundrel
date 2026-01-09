@@ -148,6 +148,34 @@ def collect_single_game_data(
     }
 
 
+def print_statistics(
+    results: Dict[str, Any],
+    title: str = "Statistics",
+    output_dir: Optional[str] = None,
+) -> None:
+    """
+    Print summary statistics in a formatted way.
+
+    Args:
+        results: Dictionary with statistics
+        title: Title to print before statistics
+        output_dir: Optional output directory to display
+    """
+    print()
+    print(f"=== {title} ===")
+    if output_dir:
+        print(f"Output directory: {output_dir}")
+    print(f"Games: {results['num_games']}")
+    print()
+    print("Statistics:")
+    print(f"  Wins: {results['wins']} ({results['win_percentage']:.2f}%)")
+    print(f"  Average score: {results['average_score']:.2f}")
+    print(f"  Best score: {results['best_score']}")
+    print(f"  Worst score: {results['worst_score']}")
+    print(f"  Average turns per game: {results['avg_turns']:.1f}")
+    print(f"  Total turns: {results['total_turns']}")
+
+
 def save_game_data(game_data: Dict[str, Any], output_dir: Path, seed: int) -> Path:
     """
     Save game data to a JSON file.
@@ -203,6 +231,7 @@ def game_generation_worker(
             num_simulations=num_simulations,
             num_workers=SELF_PLAY_NUM_WORKERS,
             add_dirichlet_noise=True,  # Enable exploration noise for self-play
+            game_seed=game_seed,  # Seed for reproducible policy sampling
         )
 
         # Create game engine
@@ -211,6 +240,9 @@ def game_generation_worker(
         # Send initial progress update
         progress_queue.put(('start', worker_id, game_seed, 0))
 
+        # Initialize events list for RL training
+        events: List[Dict[str, Any]] = []
+
         state = engine.restart()
         turn = 0
 
@@ -218,8 +250,27 @@ def game_generation_worker(
             # Send progress update for current turn
             progress_queue.put(('turn', worker_id, game_seed, turn))
 
+            # Capture game state before action selection
+            game_state_snapshot = state.copy()
+
             # Run AlphaGo MCTS to select action
             action_idx = agent.select_action(state)
+
+            # Get MCTS statistics for all child nodes
+            mcts_stats = agent.get_action_stats()
+
+            # Get cache statistics
+            cache_stats = agent.get_cache_stats()
+
+            # Record event for RL training
+            event = {
+                "turn": turn,
+                "game_state": serialize_game_state(game_state_snapshot),
+                "mcts_stats": mcts_stats,
+                "selected_action": action_idx,
+                "cache_stats": cache_stats,
+            }
+            events.append(event)
 
             # Execute action
             action_enum = agent.translator.decode_action(action_idx)
@@ -248,7 +299,7 @@ def game_generation_worker(
                     "num_workers": agent.num_workers,
                 }
             },
-            "events": [],  # For parallel generation, we skip detailed event logging for speed
+            "events": events,
         }
 
         # Save game data
@@ -337,7 +388,7 @@ def generate_self_play_games_parallel(
     saved_files = []
     scores = []
     total_turns = 0
-    completed_games = 0
+    started_games = 0
     failed_games = []
 
     # Track active games for verbose display
@@ -355,9 +406,9 @@ def generate_self_play_games_parallel(
 
     def start_new_game(worker_id: int) -> bool:
         """Start a new game for the given worker. Returns False if no more games to start."""
-        nonlocal next_game_seed, completed_games, num_games
+        nonlocal next_game_seed, started_games, num_games
 
-        if completed_games >= num_games:
+        if started_games >= num_games:
             return False
 
         game_seed = next_game_seed
@@ -381,23 +432,28 @@ def generate_self_play_games_parallel(
         process.start()
         active_processes[worker_id] = process
 
+        # Increment the counter of games we've started
+        started_games += 1
+
         return True
 
     def print_verbose_status():
-        """Print the current status with history and active games."""
+        """Print the current status with history and active games - exact format from AlphaGo MCTS collection."""
         # Clear screen and move cursor to top
         print("\033[2J\033[H", end="")  # Clear screen and move to top
 
         # Print header
         print("=== AlphaGo Self-Play Game Generation ===")
         print(f"Output: {output_dir}")
-        print(f"Parallel games: {num_parallel_games} | Completed: {len(completed_game_history)}/{num_games}")
+        print(f"Parallel games: {num_parallel_games} | Completed: {len(completed_game_history)}")
+        if num_games is not None:
+            print(f"Target: {num_games} games")
         print()
 
         # Print completed games history (last 10)
         if completed_game_history:
             print("=== Completed Games ===")
-            for i, (game_seed, score, turns, worker_id) in enumerate(completed_game_history[-10:]):
+            for i, (game_seed, score, turns, worker_id) in enumerate(completed_game_history[-10:]):  # Show last 10
                 status = "WIN" if score > 0 else "LOSE"
                 color = "\033[92m" if score > 0 else "\033[91m"  # Green for win, red for loss
                 print(f"{color}Game {game_seed}: {status} Score={score}, Turns={turns}, Worker={worker_id}\033[0m")
@@ -414,6 +470,9 @@ def generate_self_play_games_parallel(
                 print(f"{color}Worker {worker_id}: Game {game_seed}, Turn {current_turn}, {elapsed:.1f}s\033[0m")
             print()
 
+    # Initialize verbose status tracking
+    print_verbose_status.last_completed = 0
+
     try:
         # Start initial batch of games
         for worker_id in available_workers[:]:
@@ -421,7 +480,7 @@ def generate_self_play_games_parallel(
                 available_workers.remove(worker_id)
 
         # Main generation loop
-        while active_processes or completed_games < num_games:
+        while active_processes or started_games < num_games:
             # Check for progress updates
             while not progress_queue.empty():
                 try:
@@ -466,8 +525,8 @@ def generate_self_play_games_parallel(
                         del active_processes[result['worker_id']]
 
                     # Start new game for this worker if more games needed
-                    if completed_games < num_games:
-                        start_new_game(result['worker_id'])
+                    # completed_games tracks started games, so we can start a new one
+                    start_new_game(result['worker_id'])
 
                 except:
                     pass
@@ -477,7 +536,7 @@ def generate_self_play_games_parallel(
                 print_verbose_status()
 
             # Check if all processes are done and no more games to start
-            if not active_processes and completed_games >= num_games:
+            if not active_processes and started_games >= num_games:
                 break
 
             # Small delay to prevent busy waiting
@@ -540,6 +599,14 @@ def generate_self_play_games_parallel(
         if failed_games:
             print(f"Failed Games: {len(failed_games)}")
         print(f"Output Directory: {output_dir}")
+        print()
+
+        # Print failed games summary if any
+        if failed_games:
+            print(f"=== Failed Games ({len(failed_games)}) ===")
+            for seed, error in failed_games:
+                print(f"  Seed {seed}: {error}")
+            print()
 
     return results
 
@@ -578,6 +645,8 @@ def generate_self_play_games(
     """
     # For single-threaded generation or when parallel games is 1, use sequential
     if num_parallel_games <= 1:
+        if verbose:
+            print(f"Using sequential generation (num_parallel_games={num_parallel_games})")
         return generate_self_play_games_sequential(
             num_games=num_games,
             num_workers=num_workers,
@@ -590,6 +659,8 @@ def generate_self_play_games(
             verbose=verbose,
         )
     else:
+        if verbose:
+            print(f"Using parallel generation (num_parallel_games={num_parallel_games})")
         return generate_self_play_games_parallel(
             num_games=num_games,
             num_parallel_games=num_parallel_games,
@@ -604,16 +675,6 @@ def generate_self_play_games(
 
 
 def generate_self_play_games_sequential(
-    num_games: int,
-    num_workers: int,
-    policy_checkpoint: Optional[Path],
-    policy_small_checkpoint: Optional[Path],
-    value_checkpoint: Optional[Path],
-    output_dir: Path,
-    num_simulations: int = SELF_PLAY_SIMULATIONS,
-    base_seed: Optional[int] = None,
-    verbose: bool = False,
-) -> Dict[str, Any]:
     num_games: int,
     num_workers: int,
     policy_checkpoint: Optional[Path],

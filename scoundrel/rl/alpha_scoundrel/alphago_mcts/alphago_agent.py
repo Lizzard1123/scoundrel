@@ -157,10 +157,11 @@ class AlphaGoAgent:
         num_workers: int = ALPHAGO_NUM_WORKERS,
         device: Optional[str] = None,
         add_dirichlet_noise: bool = False,
+        game_seed: Optional[int] = None,
     ):
         """
         Initialize AlphaGo MCTS agent with three neural networks.
-        
+
         Args:
             policy_large_checkpoint: Path to policy network (for priors)
             policy_small_checkpoint: Path to fast rollout policy
@@ -172,6 +173,7 @@ class AlphaGoAgent:
             num_workers: Number of parallel workers (0 or 1 = sequential)
             device: Device for neural networks ("cpu", "cuda", "mps")
             add_dirichlet_noise: Whether to add exploration noise to root node
+            game_seed: Seed for reproducible policy sampling (optional)
         """
         # Resolve checkpoint paths (relative to alpha_scoundrel/)
         alpha_scoundrel_dir = Path(__file__).parent.parent
@@ -194,6 +196,7 @@ class AlphaGoAgent:
         
         self.device = device
         self.add_dirichlet_noise = add_dirichlet_noise
+        self.game_seed = game_seed
         
         # Load neural networks
         self.policy_large = PolicyLargeInference(
@@ -475,12 +478,18 @@ class AlphaGoAgent:
         When USE_POLICY_LARGE_FOR_ROLLOUTS=True, uses PolicyLarge for more accurate
         but slower rollouts. Otherwise uses PolicySmall for fast rollouts.
 
+        If game_seed is provided, seeds PyTorch RNG for reproducible sampling.
+
         Args:
             game_state: Starting game state
 
         Returns:
             Normalized score from rollout
         """
+        # Seed PyTorch RNG for reproducible policy sampling if game_seed is provided
+        if self.game_seed is not None:
+            torch.manual_seed(self.game_seed)
+
         current_state = game_state
         depth = 0
 
@@ -500,7 +509,7 @@ class AlphaGoAgent:
             action_enum = self.translator.decode_action(action_idx)
             current_state = apply_action_to_state(current_state, action_enum)
             depth += 1
-        
+
         return normalize_score(current_state.score)
     
     def _backpropagate(self, node: AlphaGoNode, value: float):
@@ -650,9 +659,10 @@ class AlphaGoAgent:
         
         # Create worker arguments
         worker_args = [
-            (game_state, simulations_per_worker, self.c_puct, self.value_weight, 
+            (game_state, simulations_per_worker, self.c_puct, self.value_weight,
              self.max_depth, worker_device, str(self.policy_large.checkpoint_path),
-             str(self.policy_small.checkpoint_path), str(self.value_net.checkpoint_path))
+             str(self.policy_small.checkpoint_path), str(self.value_net.checkpoint_path),
+             self.game_seed)
             for _ in range(self.num_workers)
         ]
         
@@ -800,22 +810,22 @@ def _run_worker_search(args) -> Dict:
     """
     Worker function for parallel search.
     Runs independent MCTS simulations and returns results.
-    
+
     IMPORTANT: This function runs in a separate process with 'spawn' start method.
     It must:
     1. Use CPU device to avoid GPU/MPS contention
     2. Import all necessary modules (not inherited from parent)
     3. Create its own agent instance with models
-    
+
     Args:
-        args: Tuple of (game_state, num_simulations, c_puct, value_weight, 
-                        max_depth, device, policy_large_path, policy_small_path, value_path)
-    
+        args: Tuple of (game_state, num_simulations, c_puct, value_weight,
+                        max_depth, device, policy_large_path, policy_small_path, value_path, game_seed)
+
     Returns:
         Dictionary with child_stats and cache_stats
     """
     (game_state, num_simulations, c_puct, value_weight, max_depth, device,
-     policy_large_path, policy_small_path, value_path) = args
+     policy_large_path, policy_small_path, value_path, game_seed) = args
     
     # Force CPU device for worker stability (should already be CPU from caller)
     if device != "cpu":
@@ -832,7 +842,8 @@ def _run_worker_search(args) -> Dict:
             value_weight=value_weight,
             max_depth=max_depth,
             num_workers=0,  # No nested parallelization
-            device=device
+            device=device,
+            game_seed=game_seed  # Seed for reproducible policy sampling
         )
         
         # Run search

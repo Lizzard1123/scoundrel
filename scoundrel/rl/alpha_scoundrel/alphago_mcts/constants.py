@@ -8,9 +8,9 @@ POLICY_SMALL_CHECKPOINT = "policy/policy_small/checkpoints/run_20260107_173211/p
 VALUE_LARGE_CHECKPOINT = "value/value_large/checkpoints/run_20260108_091813/best_model.pt"
 
 # MCTS parameters (fewer simulations needed with neural guidance)
-ALPHAGO_NUM_SIMULATIONS = 100
+ALPHAGO_NUM_SIMULATIONS = 50
 ALPHAGO_C_PUCT = 2  # PUCT exploration constant
-ALPHAGO_VALUE_WEIGHT = 0  # λ in [0,1]: 0=pure value net, 1=pure rollout
+ALPHAGO_VALUE_WEIGHT = 0.5  # λ in [0,1]: 0=pure value net, 1=pure rollout
 ALPHAGO_MAX_DEPTH = 120  # Max rollout depth
 
 # Exploration Noise (AlphaGo Zero style)
@@ -23,6 +23,15 @@ DIRICHLET_EPSILON = 0.25 # Noise weight (0.25 is standard)
 # Higher values provide speedup but require more CPU cores
 ALPHAGO_NUM_WORKERS = 1  # Root parallelization workers
 ALPHAGO_TRANSPOSITION_TABLE_SIZE = 100000
+
+# Game Collection Parallelization
+# Number of games to collect simultaneously (each in separate process to avoid GPU issues)
+ALPHAGO_PARALLEL_GAMES = 8
+
+# Rollout Policy Configuration
+# Whether to use PolicyLarge for rollouts instead of PolicySmall
+# PolicyLarge is more accurate but slower than PolicySmall
+USE_POLICY_LARGE_FOR_ROLLOUTS = False
 
 # Evaluation
 EVAL_NUM_GAMES = 10

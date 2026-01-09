@@ -43,6 +43,7 @@ from scoundrel.rl.alpha_scoundrel.alphago_mcts.constants import (
     VALUE_LARGE_CHECKPOINT,
     DIRICHLET_ALPHA,
     DIRICHLET_EPSILON,
+    USE_POLICY_LARGE_FOR_ROLLOUTS,
 )
 from scoundrel.rl.alpha_scoundrel.policy.policy_large.inference import PolicyLargeInference
 from scoundrel.rl.alpha_scoundrel.policy.policy_small.inference import PolicySmallInference
@@ -132,12 +133,15 @@ class TranspositionTable:
 class AlphaGoAgent:
     """
     AlphaGo-style MCTS agent for Scoundrel.
-    
-    Combines three neural networks with MCTS:
-    1. PolicyLarge - Strategic policy priors P(s,a) for PUCT
-    2. PolicySmall - Fast rollout policy for simulations
+
+    Combines neural networks with MCTS:
+    1. PolicyLarge - Strategic policy priors P(s,a) for PUCT selection
+    2. PolicySmall - Fast rollout policy for simulations (when USE_POLICY_LARGE_FOR_ROLLOUTS=False)
     3. ValueLarge - Position evaluation V(s)
-    
+
+    When USE_POLICY_LARGE_FOR_ROLLOUTS=True, PolicyLarge is used for both
+    selection priors and rollouts, providing more accurate but slower simulations.
+
     Uses PUCT formula for selection and mixes value net + rollout for evaluation.
     """
     
@@ -463,30 +467,36 @@ class AlphaGoAgent:
     
     def _rollout(self, game_state: GameState) -> float:
         """
-        Fast rollout using PolicySmall network with probabilistic sampling.
-        
-        Uses the learned policy (approx 50% accuracy) but samples from the 
-        probability distribution to ensure exploration and diversity in rollouts,
-        preventing the agent from getting stuck in deterministic loops.
-        
+        Rollout using either PolicyLarge or PolicySmall network with probabilistic sampling.
+
+        Uses the learned policy but samples from the probability distribution to ensure
+        exploration and diversity in rollouts, preventing deterministic loops.
+
+        When USE_POLICY_LARGE_FOR_ROLLOUTS=True, uses PolicyLarge for more accurate
+        but slower rollouts. Otherwise uses PolicySmall for fast rollouts.
+
         Args:
             game_state: Starting game state
-            
+
         Returns:
             Normalized score from rollout
         """
         current_state = game_state
         depth = 0
-        
+
         while depth < self.max_depth and not current_state.game_over:
-            # Get action probabilities from PolicySmall
-            # Note: get_probs returns CPU tensor
-            probs = self.policy_small.get_probs(current_state)
-            
+            # Choose rollout policy based on configuration
+            if USE_POLICY_LARGE_FOR_ROLLOUTS:
+                # Use PolicyLarge for rollouts (more accurate but slower)
+                _, probs = self.policy_large(game_state)  # Returns (action, probs)
+            else:
+                # Use PolicySmall for rollouts (faster but less accurate)
+                probs = self.policy_small.get_probs(current_state)
+
             # Sample from the distribution instead of argmax
             # This adds necessary noise/exploration for MCTS rollouts
             action_idx = torch.multinomial(probs, num_samples=1).item()
-            
+
             action_enum = self.translator.decode_action(action_idx)
             current_state = apply_action_to_state(current_state, action_enum)
             depth += 1

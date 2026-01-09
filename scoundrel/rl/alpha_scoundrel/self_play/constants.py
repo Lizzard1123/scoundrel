@@ -15,6 +15,7 @@ SELF_PLAY_GAMES_PER_ITERATION = 10
 SELF_PLAY_NUM_WORKERS = 8              # Internal MCTS workers (threading, not multiprocessing)
 SELF_PLAY_SIMULATIONS = 80            # Fewer than eval (3000), more than training collection (300)
 SELF_PLAY_USE_GPU = True               # Use GPU for inference during self-play
+SELF_PLAY_PARALLEL_GAMES = 8           # Number of games to generate simultaneously (each in separate process)
 
 # =============================================================================
 # Training configuration

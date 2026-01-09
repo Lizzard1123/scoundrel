@@ -10,9 +10,12 @@ import argparse
 import json
 import random
 import multiprocessing as mp
+import os
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 # Set multiprocessing start method to 'spawn' for PyTorch compatibility
 # This prevents CUDA/MPS context issues with fork on macOS
@@ -32,6 +35,7 @@ from scoundrel.rl.alpha_scoundrel.alphago_mcts.constants import (
     ALPHAGO_VALUE_WEIGHT,
     ALPHAGO_MAX_DEPTH,
     ALPHAGO_NUM_WORKERS,
+    ALPHAGO_PARALLEL_GAMES,
     POLICY_LARGE_CHECKPOINT,
     POLICY_SMALL_CHECKPOINT,
     VALUE_LARGE_CHECKPOINT,
@@ -174,6 +178,113 @@ def save_game_data(game_data: Dict[str, Any], output_dir: Path, seed: int) -> Pa
     return filepath
 
 
+def game_worker(
+    worker_id: int,
+    game_seed: int,
+    num_simulations: int,
+    output_dir: Path,
+    progress_queue: mp.Queue,
+    result_queue: mp.Queue,
+) -> None:
+    """
+    Worker function that runs a single game and reports progress.
+
+    Args:
+        worker_id: Unique identifier for this worker
+        game_seed: Seed for the game
+        num_simulations: Number of MCTS simulations per move
+        output_dir: Directory to save game data
+        progress_queue: Queue for sending progress updates
+        result_queue: Queue for sending final results
+    """
+    try:
+        # Initialize agent in worker process (each process gets its own GPU context)
+        agent = AlphaGoAgent(
+            num_simulations=num_simulations,
+            c_puct=ALPHAGO_C_PUCT,
+            value_weight=ALPHAGO_VALUE_WEIGHT,
+            max_depth=ALPHAGO_MAX_DEPTH,
+            num_workers=ALPHAGO_NUM_WORKERS,
+        )
+
+        # Create game engine
+        engine = GameManager(seed=game_seed)
+
+        # Send initial progress update
+        progress_queue.put(('start', worker_id, game_seed, 0))
+
+        state = engine.restart()
+        turn = 0
+
+        while not state.game_over:
+            # Send progress update for current turn
+            progress_queue.put(('turn', worker_id, game_seed, turn))
+
+            # Run AlphaGo MCTS to select action
+            action_idx = agent.select_action(state)
+
+            # Execute action
+            action_enum = agent.translator.decode_action(action_idx)
+            engine.execute_turn(action_enum)
+            state = engine.get_state()
+
+            turn += 1
+
+        # Collect final game data
+        final_state = state.copy()
+        final_score = state.score
+
+        game_data = {
+            "metadata": {
+                "seed": game_seed,
+                "num_simulations": num_simulations,
+                "timestamp": datetime.now().isoformat(),
+                "final_score": final_score,
+                "num_turns": turn,
+                "final_state": serialize_game_state(final_state),
+                "agent_type": "alphago_mcts",
+                "config": {
+                    "c_puct": ALPHAGO_C_PUCT,
+                    "value_weight": ALPHAGO_VALUE_WEIGHT,
+                    "max_depth": ALPHAGO_MAX_DEPTH,
+                    "num_workers": ALPHAGO_NUM_WORKERS,
+                    "policy_large": POLICY_LARGE_CHECKPOINT,
+                    "policy_small": POLICY_SMALL_CHECKPOINT,
+                    "value_large": VALUE_LARGE_CHECKPOINT,
+                }
+            },
+            "events": [],  # For parallel collection, we skip detailed event logging for speed
+        }
+
+        # Save game data
+        filepath = save_game_data(game_data, output_dir, game_seed)
+
+        # Send completion update
+        progress_queue.put(('complete', worker_id, game_seed, turn))
+
+        # Send result
+        result_queue.put({
+            'worker_id': worker_id,
+            'game_seed': game_seed,
+            'score': final_score,
+            'turns': turn,
+            'filepath': str(filepath),
+            'success': True,
+        })
+
+    except Exception as e:
+        # Send error update
+        progress_queue.put(('error', worker_id, game_seed, str(e)))
+
+        # Send error result
+        result_queue.put({
+            'worker_id': worker_id,
+            'game_seed': game_seed,
+            'error': str(e),
+            'success': False,
+        })
+
+
 def calculate_statistics(scores: List[int], total_turns: int, num_collected: int) -> Dict[str, Any]:
     """
     Calculate summary statistics from game scores and turns.
@@ -233,22 +344,24 @@ def print_statistics(
     print(f"  Total turns: {results['total_turns']}")
 
 
-def collect_games(
+def collect_games_parallel(
     num_games: int = None,
     seed: Optional[int] = None,
     num_simulations: int = ALPHAGO_NUM_SIMULATIONS,
+    num_parallel_games: int = ALPHAGO_PARALLEL_GAMES,
     output_dir: Path = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """
-    Collect data from multiple games using AlphaGo MCTS agent.
+    Collect data from multiple games using AlphaGo MCTS agent with parallel processing.
     
     Args:
         num_games: Number of games to collect (None = run until interrupted)
         seed: Base seed for GameManager (None = random seed)
         num_simulations: Number of MCTS simulations per move
+        num_parallel_games: Number of games to run simultaneously
         output_dir: Directory to save collected games (default: alphago_mcts/logs/collected_games)
-        verbose: Print progress during collection
+        verbose: Print progress during collection with colored concurrent game status
         
     Returns:
         Dictionary with collection statistics
@@ -270,6 +383,7 @@ def collect_games(
     if verbose:
         print(f"Output directory: {output_dir}")
         print(f"Base seed: {seed}")
+        print(f"Parallel games: {num_parallel_games}")
         if num_games is None:
             print("Collecting games (press Ctrl+C to stop)...")
         else:
@@ -285,6 +399,281 @@ def collect_games(
         print(f"  Value Large: {VALUE_LARGE_CHECKPOINT}")
         print()
     
+    # Initialize tracking variables
+    saved_files = []
+    scores = []
+    total_turns = 0
+    completed_games = 0
+    failed_games = []
+    
+    # Track active games for verbose display
+    active_games = {}  # worker_id -> (game_seed, start_time, current_turn)
+    completed_game_history = []  # List of (game_seed, score, turns, worker_id) tuples
+
+    # Create queues for inter-process communication
+    progress_queue = mp.Queue()
+    result_queue = mp.Queue()
+
+    # Track next game seed and worker assignments
+    next_game_seed = seed
+    available_workers = list(range(num_parallel_games))
+    active_processes = {}  # worker_id -> process
+
+    def start_new_game(worker_id: int) -> bool:
+        """Start a new game for the given worker. Returns False if no more games to start."""
+        nonlocal next_game_seed, num_games
+
+        if num_games is not None and completed_games >= num_games:
+            return False
+
+        game_seed = next_game_seed
+        next_game_seed += 1
+
+        # Start process for this game
+        process = mp.Process(
+            target=game_worker,
+            args=(worker_id, game_seed, num_simulations, output_dir, progress_queue, result_queue)
+        )
+        process.start()
+        active_processes[worker_id] = process
+
+        return True
+
+    def print_verbose_status():
+        """Print the current status with history and active games."""
+        # Clear screen and move cursor to top
+        print("\033[2J\033[H", end="")  # Clear screen and move to top
+
+        # Print header
+        print("=== AlphaGo MCTS Game Collection ===")
+        print(f"Output: {output_dir}")
+        print(f"Parallel games: {num_parallel_games} | Completed: {len(completed_game_history)}")
+        print()
+
+        # Print completed games history
+        if completed_game_history:
+            print("=== Completed Games ===")
+            for i, (game_seed, score, turns, worker_id) in enumerate(completed_game_history[-10:]):  # Show last 10
+                status = "WIN" if score > 0 else "LOSE"
+                color = "\033[92m" if score > 0 else "\033[91m"  # Green for win, red for loss
+                print(f"{color}Game {game_seed}: {status} Score={score}, Turns={turns}, Worker={worker_id}\033[0m")
+            if len(completed_game_history) > 10:
+                print(f"... and {len(completed_game_history) - 10} more")
+            print()
+
+        # Print active games
+        if active_games:
+            print("=== Active Games ===")
+            for worker_id, (game_seed, start_time, current_turn) in active_games.items():
+                elapsed = time.time() - start_time
+                color = "\033[94m"  # Blue for active
+                print(f"{color}Worker {worker_id}: Game {game_seed}, Turn {current_turn}, {elapsed:.1f}s\033[0m")
+            print()
+
+    try:
+        # Start initial batch of games
+        for worker_id in available_workers[:]:
+            if not start_new_game(worker_id):
+                available_workers.remove(worker_id)
+
+        # Main collection loop
+        while active_processes or (num_games is None or completed_games < num_games):
+            # Check for progress updates
+            while not progress_queue.empty():
+                try:
+                    msg_type, worker_id, game_seed, data = progress_queue.get_nowait()
+
+                    if msg_type == 'start':
+                        active_games[worker_id] = (game_seed, time.time(), 0)
+                    elif msg_type == 'turn':
+                        if worker_id in active_games:
+                            _, start_time, _ = active_games[worker_id]
+                            active_games[worker_id] = (game_seed, start_time, data)
+                    elif msg_type == 'complete':
+                        if worker_id in active_games:
+                            del active_games[worker_id]
+                    elif msg_type == 'error':
+                        if worker_id in active_games:
+                            del active_games[worker_id]
+                except:
+                    pass
+
+            # Check for completed results
+            while not result_queue.empty():
+                try:
+                    result = result_queue.get_nowait()
+
+                    if result['success']:
+                        scores.append(result['score'])
+                        total_turns += result['turns']
+                        saved_files.append(result['filepath'])
+                        completed_game_history.append((
+                            result['game_seed'],
+                            result['score'],
+                            result['turns'],
+                            result['worker_id']
+                        ))
+                    else:
+                        failed_games.append((result['game_seed'], result.get('error', 'Unknown error')))
+
+                    # Clean up finished process
+                    if result['worker_id'] in active_processes:
+                        active_processes[result['worker_id']].join()
+                        del active_processes[result['worker_id']]
+
+                    # Start new game for this worker if more games needed
+                    if num_games is None or completed_games < num_games:
+                        start_new_game(result['worker_id'])
+
+                except:
+                    pass
+
+            # Update display if verbose
+            if verbose:
+                print_verbose_status()
+
+            # Check if all processes are done and no more games to start
+            if not active_processes and (num_games is not None and completed_games >= num_games):
+                break
+
+            # Small delay to prevent busy waiting
+            time.sleep(0.1)
+    
+    except KeyboardInterrupt:
+        if verbose:
+            print("\nInterrupted by user. Terminating processes...")
+        # Terminate all active processes
+        for process in active_processes.values():
+            process.terminate()
+        for process in active_processes.values():
+            process.join()
+
+    # Wait for any remaining processes
+    for process in active_processes.values():
+        process.join()
+    
+    # Calculate statistics
+    num_collected = len(scores)
+    results = calculate_statistics(scores, total_turns, num_collected)
+    results["output_dir"] = str(output_dir)
+    results["saved_files"] = saved_files
+    results["failed_games"] = failed_games
+    results["num_failed"] = len(failed_games)
+    
+    # Print final statistics
+    if verbose:
+        print_verbose_status()  # Final status update
+        print_statistics(
+            results,
+            title="Collection Complete",
+            output_dir=str(output_dir),
+        )
+        
+        # Print failed games summary if any
+        if failed_games:
+            print()
+            print(f"=== Failed Games ({len(failed_games)}) ===")
+            for seed, error in failed_games:
+                print(f"  Seed {seed}: {error}")
+    
+    return results
+
+
+def collect_games(
+    num_games: int = None,
+    seed: Optional[int] = None,
+    num_simulations: int = ALPHAGO_NUM_SIMULATIONS,
+    output_dir: Path = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """
+    Collect data from multiple games using AlphaGo MCTS agent.
+
+    This is a wrapper that uses parallel collection when num_parallel_games > 1,
+    otherwise falls back to sequential collection for compatibility.
+
+    Args:
+        num_games: Number of games to collect (None = run until interrupted)
+        seed: Base seed for GameManager (None = random seed)
+        num_simulations: Number of MCTS simulations per move
+        output_dir: Directory to save collected games (default: alphago_mcts/logs/collected_games)
+        verbose: Print progress during collection
+
+    Returns:
+        Dictionary with collection statistics
+    """
+    # For single-threaded collection or when parallel games is 1, use sequential
+    if ALPHAGO_PARALLEL_GAMES <= 1:
+        return collect_games_sequential(
+            num_games=num_games,
+            seed=seed,
+            num_simulations=num_simulations,
+            output_dir=output_dir,
+            verbose=verbose,
+        )
+    else:
+        return collect_games_parallel(
+            num_games=num_games,
+            seed=seed,
+            num_simulations=num_simulations,
+            num_parallel_games=ALPHAGO_PARALLEL_GAMES,
+            output_dir=output_dir,
+            verbose=verbose,
+        )
+
+
+def collect_games_sequential(
+    num_games: int = None,
+    seed: Optional[int] = None,
+    num_simulations: int = ALPHAGO_NUM_SIMULATIONS,
+    output_dir: Path = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """
+    Collect data from multiple games sequentially using AlphaGo MCTS agent.
+
+    Args:
+        num_games: Number of games to collect (None = run until interrupted)
+        seed: Base seed for GameManager (None = random seed)
+        num_simulations: Number of MCTS simulations per move
+        output_dir: Directory to save collected games (default: alphago_mcts/logs/collected_games)
+        verbose: Print progress during collection
+
+    Returns:
+        Dictionary with collection statistics
+    """
+    # Generate random seed if not provided
+    if seed is None:
+        seed = random.randint(0, 2**31 - 1)
+        if verbose:
+            print(f"Using random seed: {seed}")
+
+    # Set up output directory
+    if output_dir is None:
+        script_dir = Path(__file__).parent
+        output_dir = script_dir / "logs" / "collected_games"
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print(f"Output directory: {output_dir}")
+        print(f"Base seed: {seed}")
+        if num_games is None:
+            print("Collecting games (press Ctrl+C to stop)...")
+        else:
+            print(f"Collecting {num_games} games...")
+        print(f"AlphaGo MCTS configuration:")
+        print(f"  Simulations per move: {num_simulations}")
+        print(f"  C_PUCT: {ALPHAGO_C_PUCT}")
+        print(f"  Value Weight (λ): {ALPHAGO_VALUE_WEIGHT}")
+        print(f"  Max depth: {ALPHAGO_MAX_DEPTH}")
+        print(f"  Workers: {ALPHAGO_NUM_WORKERS}")
+        print(f"  Policy Large: {POLICY_LARGE_CHECKPOINT}")
+        print(f"  Policy Small: {POLICY_SMALL_CHECKPOINT}")
+        print(f"  Value Large: {VALUE_LARGE_CHECKPOINT}")
+        print()
+
     # Initialize agent (reuse same agent for all games)
     try:
         agent = AlphaGoAgent(
@@ -312,35 +701,35 @@ def collect_games(
             "num_failed": 0,
             "initialization_error": str(e),
         }
-    
+
     saved_files = []
     scores = []
     total_turns = 0
     game_num = 0
-    
+
     failed_games = []
-    
+
     try:
         while num_games is None or game_num < num_games:
             game_num += 1
             game_seed = seed + game_num - 1
-            
+
             try:
                 if verbose:
                     if num_games is None:
                         print(f"Collecting game {game_num} (seed={game_seed})...", end=" ", flush=True)
                     else:
                         print(f"Collecting game {game_num}/{num_games} (seed={game_seed})...", end=" ", flush=True)
-                
+
                 # Create new engine for each game
                 engine = GameManager(seed=game_seed)
-                
+
                 # Clear cache between games for consistent behavior
                 agent.clear_cache()
-                
+
                 # Collect game data
                 game_data = collect_game_data(agent, engine, game_seed, num_simulations)
-                
+
                 # Save game data
                 filepath = save_game_data(
                     game_data,
@@ -348,15 +737,15 @@ def collect_games(
                     game_seed
                 )
                 saved_files.append(str(filepath))
-                
+
                 score = game_data["metadata"]["final_score"]
                 num_turns = game_data["metadata"]["num_turns"]
                 scores.append(score)
                 total_turns += num_turns
-                
+
                 if verbose:
                     print(f"Score={score}, Turns={num_turns}, Saved to {filepath.name}")
-            
+
             except Exception as e:
                 # Log the error but continue with next game
                 failed_games.append((game_seed, str(e)))
@@ -365,12 +754,12 @@ def collect_games(
                     print(f"Continuing with next game...")
                 # Continue to next game
                 continue
-    
+
     except KeyboardInterrupt:
         if verbose:
             print()
             print("\nInterrupted by user. Saving collected games...")
-    
+
     # Calculate statistics
     num_collected = len(scores)
     results = calculate_statistics(scores, total_turns, num_collected)
@@ -378,7 +767,7 @@ def collect_games(
     results["saved_files"] = saved_files
     results["failed_games"] = failed_games
     results["num_failed"] = len(failed_games)
-    
+
     # Print statistics
     if verbose:
         print_statistics(
@@ -386,14 +775,14 @@ def collect_games(
             title="Collection Complete",
             output_dir=str(output_dir),
         )
-        
+
         # Print failed games summary if any
         if failed_games:
             print()
             print(f"=== Failed Games ({len(failed_games)}) ===")
             for seed, error in failed_games:
                 print(f"  Seed {seed}: {error}")
-    
+
     return results
 
 
@@ -427,19 +816,26 @@ def main():
         help="Directory to save collected games (default: alphago_mcts/logs/collected_games)"
     )
     parser.add_argument(
+        "--num-parallel-games",
+        type=int,
+        default=ALPHAGO_PARALLEL_GAMES,
+        help=f"Number of games to collect simultaneously (default: {ALPHAGO_PARALLEL_GAMES})"
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Print progress during collection"
+        help="Print progress during collection with colored concurrent game status"
     )
     
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir) if args.output_dir else None
     
-    collect_games(
+    collect_games_parallel(
         num_games=args.num_games,
         seed=args.seed,
         num_simulations=args.num_simulations,
+        num_parallel_games=args.num_parallel_games,
         output_dir=output_dir,
         verbose=args.verbose,
     )

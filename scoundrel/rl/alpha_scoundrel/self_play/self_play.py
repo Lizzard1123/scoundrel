@@ -18,7 +18,39 @@ from typing import Optional, Dict, Any, Tuple
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from scoundrel.rl.alpha_scoundrel.self_play.constants import *
+from scoundrel.rl.alpha_scoundrel.self_play.constants import (
+    SELF_PLAY_GAMES_PER_ITERATION,
+    SELF_PLAY_NUM_WORKERS,
+    SELF_PLAY_SIMULATIONS,
+    SELF_PLAY_PARALLEL_GAMES,
+    POLICY_EPOCHS_PER_ITERATION,
+    VALUE_EPOCHS_PER_ITERATION,
+    BATCH_SIZE,
+    EVAL_GAMES,
+    EVAL_SEED,
+    EVAL_SIMULATIONS,
+    CHECKPOINT_BASE_DIR,
+    RUNS_BASE_DIR,
+    ITERATION_PREFIX,
+    POLICY_CHECKPOINT_NAME,
+    VALUE_CHECKPOINT_NAME,
+    BEST_CHECKPOINT_DIR,
+    POLICY_LR,
+    POLICY_MAX_GRAD_NORM,
+    ENTROPY_COEF,
+    REWARD_TYPE,
+    VALUE_LR,
+    VALUE_MAX_GRAD_NORM,
+    TRAIN_VAL_SPLIT,
+    STACK_SEQ_LEN,
+    POLICY_LARGE_CHECKPOINT,
+    POLICY_SMALL_CHECKPOINT,
+    VALUE_LARGE_CHECKPOINT,
+    TENSORBOARD_LOG_INTERVAL,
+    TENSORBOARD_HISTOGRAM_INTERVAL,
+    LOG_WEIGHT_HISTOGRAMS,
+    LOG_GRADIENT_HISTOGRAMS,
+)
 from scoundrel.rl.alpha_scoundrel.self_play.game_generator import generate_self_play_games
 from scoundrel.rl.alpha_scoundrel.self_play.rl_training import train_policy_rl
 from scoundrel.rl.alpha_scoundrel.alphago_mcts.alphago_agent import AlphaGoAgent
@@ -327,6 +359,7 @@ def run_self_play_training(
     resume_from: Optional[int] = None,
     initial_policy_checkpoint: Optional[Path] = None,
     initial_value_checkpoint: Optional[Path] = None,
+    num_parallel_games: int = SELF_PLAY_PARALLEL_GAMES,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -339,6 +372,7 @@ def run_self_play_training(
         resume_from: Resume from specific iteration (None = start from 1)
         initial_policy_checkpoint: Path to initial policy checkpoint (overrides default)
         initial_value_checkpoint: Path to initial value checkpoint (overrides default)
+        num_parallel_games: Number of games to generate simultaneously
         verbose: Print detailed progress
 
     Returns:
@@ -472,6 +506,7 @@ def run_self_play_training(
                 value_checkpoint=value_checkpoint,
                 output_dir=games_dir,
                 num_simulations=SELF_PLAY_SIMULATIONS,
+                num_parallel_games=num_parallel_games,
                 verbose=verbose,
             )
 
@@ -692,9 +727,15 @@ Examples:
         help="Disable TensorBoard logging"
     )
     parser.add_argument(
+        "--num-parallel-games",
+        type=int,
+        default=SELF_PLAY_PARALLEL_GAMES,
+        help=f"Number of games to generate simultaneously (default: {SELF_PLAY_PARALLEL_GAMES})"
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Print detailed progress information"
+        help="Print detailed progress information with colored concurrent game status"
     )
 
     args = parser.parse_args()
@@ -710,6 +751,7 @@ Examples:
         resume_from=args.resume_from,
         initial_policy_checkpoint=policy_checkpoint,
         initial_value_checkpoint=value_checkpoint,
+        num_parallel_games=args.num_parallel_games,
         verbose=args.verbose,
     )
 
